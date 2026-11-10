@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            // Server locale + ricompilazione automatica (npm run dev).
+            // Usato anche dalle configurazioni di debug in launch.json.
+            "label": "dev",
+            "type": "npm",
+            "script": "dev",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "coriolis-dev",
+                "pattern": { "regexp": "^__nessun_errore__$" },
+                "background": {
+                    "activeBegins": true,
+                    "beginsPattern": "Generato|In attesa",
+                    "endsPattern": "Pagina locale:"
+                }
+            }
+        },
+        {
+            // Genera dist/sandcastle.js e lo copia negli appunti.
+            "label": "Copia per Sandcastle",
+            "type": "npm",
+            "script": "sandcastle",
+            "problemMatcher": []
+        }
+    ]
+}

@@ -114,13 +114,16 @@ const settings = {
     useSphericalEarth: true,
 
     // Latitudine geodetica [-90°, +90°] e longitudine [0°, 360°)
-    // del punto di partenza.
+    // del punto di partenza. Valori di riserva: all'avvio app.js li
+    // sostituisce con la posizione geografica del PC, se il browser
+    // la fornisce.
     startLatitudeDeg: 45.0,
     startLongitudeDeg: 7.1,
     startSurfacePointECEF: Cesium.Cartesian3.fromDegrees(7.1, 45.0, 0),
 
-    // Quota di partenza del punto più basso della sfera [m].
-    startAltitude: 225000,
+    // Quota di partenza del punto più basso della sfera [m]:
+    // all'avvio la sfera appoggia sulla superficie.
+    startAltitude: 0,
 
     // Terna di velocità "di riferimento": "relative" (ECEF) o
     // "absolute" (ECI). Vedi VELOCITÀ INIZIALE.
@@ -580,53 +583,145 @@ let simulationTime = 0;
 let earthAngle = 0;
 
 // --------------------------------------------------
-// POSIZIONE INIZIALE DELLA TELECAMERA IN ECI
-// --------------------------------------------------
-
-const cameraPositionECI = Cesium.Cartesian3.fromDegrees(
-    7.1,
-    45.0,
-    400000
-);
-
-const cameraDirectionECI = Cesium.Cartesian3.normalize(
-    Cesium.Cartesian3.negate(
-        cameraPositionECI,
-        new Cesium.Cartesian3()
-    ),
-    new Cesium.Cartesian3()
-);
-
-// Calcolo di un vettore Up ortogonale alla direzione
-const globalZ = new Cesium.Cartesian3(0, 0, 1);
-
-const projection = Cesium.Cartesian3.multiplyByScalar(
-    cameraDirectionECI,
-    Cesium.Cartesian3.dot(globalZ, cameraDirectionECI),
-    new Cesium.Cartesian3()
-);
-
-const cameraUpECI = Cesium.Cartesian3.normalize(
-    Cesium.Cartesian3.subtract(
-        globalZ,
-        projection,
-        new Cesium.Cartesian3()
-    ),
-    new Cesium.Cartesian3()
-);
-
-// --------------------------------------------------
 // POSA INERZIALE CORRENTE DELLA TELECAMERA
 // --------------------------------------------------
+//
+// Impostata all'avvio da centerCameraOnStartPoint() (più avanti,
+// quando la dimensione della vista è nota).
 
-let cameraPositionECI_current =
-    Cesium.Cartesian3.clone(cameraPositionECI);
+let cameraPositionECI_current = new Cesium.Cartesian3();
+let cameraDirectionECI_current = new Cesium.Cartesian3();
+let cameraUpECI_current = new Cesium.Cartesian3();
 
-let cameraDirectionECI_current =
-    Cesium.Cartesian3.clone(cameraDirectionECI);
+// --------------------------------------------------
+// INQUADRATURA INIZIALE: SFERA VISTA DA SUD-SUD-EST
+// --------------------------------------------------
+//
+// La telecamera guarda il centro della sfera da una direzione fissa
+// nella terna locale Est-Nord-Su (normale geodetica) del punto di
+// partenza:
+//   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
+//   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
+// Il vettore Up sta nel piano formato dalla direzione di vista e dalla
+// normale alla superficie (nessun rollio): la verticale locale appare
+// verticale sullo schermo.
+//
+// La distanza è quella per cui il disco terrestre occupa la frazione
+// EARTH_WIDTH_FRACTION della larghezza della vista. Verticalmente la
+// Terra può uscire dalla vista se questa è più larga che alta.
 
-let cameraUpECI_current =
-    Cesium.Cartesian3.clone(cameraUpECI);
+const CAMERA_AZIMUTH_DEG = 150;    // Dal Nord, in senso orario [°]
+const CAMERA_ELEVATION_DEG = 45;   // Sopra l'orizzonte locale [°]
+const EARTH_WIDTH_FRACTION = 0.95; // Larghezza della Terra / larghezza della vista
+
+// Tangente del semiangolo orizzontale del campo visivo.
+function tanHalfFovHorizontal() {
+    const width = viewer.container.clientWidth || 1;
+    const height = viewer.container.clientHeight || 1;
+    // In Cesium "fov" vale per il lato più lungo della vista.
+    const tanHalfFov = Math.tan(viewer.camera.frustum.fov / 2);
+    return width >= height ? tanHalfFov : tanHalfFov * width / height;
+}
+
+// Frazione della larghezza della vista occupata dalla Terra, vista da
+// "position" lungo "direction" con il vettore "up" (Infinity se la
+// Terra esce dai lati o la telecamera è troppo vicina).
+//
+// I bordi sinistro e destro del disco sono dati dai due piani tangenti
+// alla Terra che contengono la retta per la telecamera parallela a Up:
+// nel piano (destra, direzione) il centro della Terra sta all'angolo
+// a = atan2(x, z) e i piani tangenti a a ± asin(R / distanza).
+function earthWidthFraction(position, direction, up, tanHalfFov) {
+    const C3 = Cesium.Cartesian3;
+    const right = C3.cross(direction, up, new C3());
+    const toCenter = C3.negate(position, new C3());
+    const x = C3.dot(toCenter, right);
+    const z = C3.dot(toCenter, direction);
+    const distance = Math.hypot(x, z);
+    const radius = Cesium.Ellipsoid.WGS84.maximumRadius;
+    if (distance <= radius) {
+        return Infinity;
+    }
+    const a = Math.atan2(x, z);
+    const b = Math.asin(radius / distance);
+    if (a + b >= Math.PI / 2 || a - b <= -Math.PI / 2) {
+        return Infinity;
+    }
+    return (Math.tan(a + b) - Math.tan(a - b)) / (2 * tanHalfFov);
+}
+
+// Imposta la posa ECI della telecamera. Va chiamata a t = 0, quando
+// ECI ed ECEF coincidono (le coordinate geografiche valgono anche in ECI).
+function centerCameraOnStartPoint() {
+    const target = spherePositionECI_initial;
+
+    // Terna Est-Nord-Su nel punto di partenza.
+    const enu = Cesium.Transforms.eastNorthUpToFixedFrame(
+        settings.startSurfacePointECEF
+    );
+    const east = Cesium.Matrix4.getColumn(enu, 0, new Cesium.Cartesian4());
+    const north = Cesium.Matrix4.getColumn(enu, 1, new Cesium.Cartesian4());
+    const normal = Cesium.Matrix4.getColumn(enu, 2, new Cesium.Cartesian4());
+
+    // Versore dalla sfera verso la telecamera.
+    const azimuth = Cesium.Math.toRadians(CAMERA_AZIMUTH_DEG);
+    const elevation = Cesium.Math.toRadians(CAMERA_ELEVATION_DEG);
+    const e = Math.sin(azimuth) * Math.cos(elevation);
+    const n = Math.cos(azimuth) * Math.cos(elevation);
+    const u = Math.sin(elevation);
+    const offset = new Cesium.Cartesian3(
+        e * east.x + n * north.x + u * normal.x,
+        e * east.y + n * north.y + u * normal.y,
+        e * east.z + n * north.z + u * normal.z
+    );
+    Cesium.Cartesian3.normalize(offset, offset);
+
+    Cesium.Cartesian3.negate(offset, cameraDirectionECI_current);
+
+    // Up: componente della normale ortogonale alla direzione di vista,
+    // quindi complanare con la normale e la direzione.
+    const normal3 = Cesium.Cartesian3.fromCartesian4(normal);
+    const projection = Cesium.Cartesian3.multiplyByScalar(
+        cameraDirectionECI_current,
+        Cesium.Cartesian3.dot(normal3, cameraDirectionECI_current),
+        new Cesium.Cartesian3()
+    );
+    Cesium.Cartesian3.subtract(normal3, projection, cameraUpECI_current);
+    Cesium.Cartesian3.normalize(cameraUpECI_current, cameraUpECI_current);
+
+    // Distanza a cui la Terra occupa EARTH_WIDTH_FRACTION della
+    // larghezza (bisezione: allontanandosi la Terra rimpicciolisce).
+    const tanHalfFov = tanHalfFovHorizontal();
+    const candidate = new Cesium.Cartesian3();
+    function fractionAt(distance) {
+        Cesium.Cartesian3.add(
+            target,
+            Cesium.Cartesian3.multiplyByScalar(offset, distance, candidate),
+            candidate
+        );
+        return earthWidthFraction(
+            candidate, cameraDirectionECI_current, cameraUpECI_current, tanHalfFov
+        );
+    }
+    let near = 0;
+    let far = 1.0e7;
+    while (fractionAt(far) > EARTH_WIDTH_FRACTION) {
+        far *= 2;
+    }
+    for (let i = 0; i < 50; i++) {
+        const mid = 0.5 * (near + far);
+        if (fractionAt(mid) > EARTH_WIDTH_FRACTION) {
+            near = mid;
+        } else {
+            far = mid;
+        }
+    }
+    Cesium.Cartesian3.add(
+        target,
+        Cesium.Cartesian3.multiplyByScalar(offset, far, candidate),
+        cameraPositionECI_current
+    );
+}
 
 // --------------------------------------------------
 // MEMORIZZAZIONE DELL'ULTIMA POSA IMPOSTATA
@@ -634,6 +729,9 @@ let cameraUpECI_current =
 // --------------------------------------------------
 
 let lastAppliedCameraPose = undefined;
+
+// Diventa vero al primo movimento della telecamera fatto dall'utente.
+let cameraMovedByUser = false;
 
 function rememberCameraPose() {
     lastAppliedCameraPose = {
@@ -730,7 +828,12 @@ function applyCameraECI() {
 // --------------------------------------------------
 // INIZIALIZZAZIONE TELECAMERA
 // --------------------------------------------------
+//
+// Prima inquadratura con il punto di riserva; ripetuta a fine script
+// (vista ridimensionata dal pannello) e quando arriva la posizione
+// geografica del PC.
 
+centerCameraOnStartPoint();
 applyCameraECI();
 
 // --------------------------------------------------
@@ -1214,6 +1317,18 @@ function restartSimulation(skipInput) {
 // CONTROLLI DELLA TELECAMERA
 // --------------------------------------------------
 
+// Comandi predefiniti di Cesium, scritti qui per chiarezza: sono quelli
+// descritti dal pannello di aiuto "?" in alto a destra. In 3D:
+//   rotate (gira il globo)        trascinamento con il tasto sinistro
+//   zoom                          rotellina, trascinamento con il
+//                                 tasto destro, pinch
+//   tilt (inclina verso           trascinamento con il tasto centrale,
+//   l'orizzonte)                  Ctrl + trascinamento sinistro o destro,
+//                                 pinch
+//   look (ruota la telecamera     Shift + trascinamento con il tasto
+//   su se stessa)                 sinistro
+// "translate" agisce solo in 2D e Columbus View.
+
 const controller =
     viewer.scene.screenSpaceCameraController;
 
@@ -1223,23 +1338,33 @@ controller.enableTranslate = true;
 controller.enableTilt = true;
 controller.enableLook = true;
 
+controller.rotateEventTypes = Cesium.CameraEventType.LEFT_DRAG;
+
 controller.zoomEventTypes = [
+    Cesium.CameraEventType.RIGHT_DRAG,
     Cesium.CameraEventType.WHEEL,
     Cesium.CameraEventType.PINCH
 ];
 
-controller.rotateEventTypes = [
-    Cesium.CameraEventType.LEFT_DRAG
-];
-
-controller.translateEventTypes = [
-    Cesium.CameraEventType.RIGHT_DRAG
-];
-
 controller.tiltEventTypes = [
     Cesium.CameraEventType.MIDDLE_DRAG,
-    Cesium.CameraEventType.PINCH
+    Cesium.CameraEventType.PINCH,
+    {
+        eventType: Cesium.CameraEventType.LEFT_DRAG,
+        modifier: Cesium.KeyboardEventModifier.CTRL
+    },
+    {
+        eventType: Cesium.CameraEventType.RIGHT_DRAG,
+        modifier: Cesium.KeyboardEventModifier.CTRL
+    }
 ];
+
+controller.lookEventTypes = {
+    eventType: Cesium.CameraEventType.LEFT_DRAG,
+    modifier: Cesium.KeyboardEventModifier.SHIFT
+};
+
+controller.translateEventTypes = Cesium.CameraEventType.LEFT_DRAG;
 
 // --------------------------------------------------
 // AGGIORNAMENTO DELLA SIMULAZIONE
@@ -1251,6 +1376,7 @@ viewer.scene.preRender.addEventListener(function (scene, time) {
     //    posa in ECI usando l'angolo del frame precedente.
     if (cameraPoseHasChanged()) {
         captureCameraECI();
+        cameraMovedByUser = true;
     }
 
     // 2. Aggiorna tempo, angolo terrestre e fisica allo stesso
@@ -2072,6 +2198,66 @@ viewer.scene.postRender.addEventListener(function () {
         speedEciKmh.toFixed(0) +
         " km/h";
 });
+
+// --------------------------------------------------
+// AVVIO: PUNTO DI PARTENZA NELLA POSIZIONE DEL PC
+// --------------------------------------------------
+//
+// La vista ora ha la sua dimensione definitiva (a destra del
+// pannello): si ricalcola l'inquadratura della Terra intera.
+centerCameraOnStartPoint();
+applyCameraECI();
+
+// Il browser fornisce la posizione solo in un contesto sicuro (https
+// o localhost) e se l'utente lo consente. La risposta arriva dopo
+// qualche istante: se nel frattempo l'utente ha già scelto un punto,
+// avviato la simulazione o mosso la telecamera, la sua scelta resta.
+// In caso di rifiuto o errore restano i valori di riserva.
+
+function requestGeographicStartPoint() {
+    if (!navigator.geolocation) {
+        console.info("Posizione geografica non disponibile: uso il punto predefinito.");
+        return;
+    }
+
+    const fallbackLatitude = settings.startLatitudeDeg;
+    const fallbackLongitude = settings.startLongitudeDeg;
+
+    navigator.geolocation.getCurrentPosition(
+        function (position) {
+            const untouched =
+                !viewer.clock.shouldAnimate &&
+                simulationTime === 0 &&
+                settings.startLatitudeDeg === fallbackLatitude &&
+                settings.startLongitudeDeg === fallbackLongitude;
+            if (!untouched) {
+                return;
+            }
+
+            applyStartPoint(position.coords.latitude, position.coords.longitude);
+            syncStartInputs();
+            restartSimulation();
+
+            if (!cameraMovedByUser) {
+                centerCameraOnStartPoint();
+                applyCameraECI();
+            }
+        },
+        function (error) {
+            console.info(
+                "Posizione geografica non disponibile (" + error.message +
+                "): uso il punto predefinito."
+            );
+        },
+        {
+            enableHighAccuracy: false, // basta la posizione approssimata
+            timeout: 15000,
+            maximumAge: 10 * 60 * 1000
+        }
+    );
+}
+
+requestGeographicStartPoint();
 
 // --------------------------------------------------
 // ACCESSO PER I TEST END-TO-END

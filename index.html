@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Accelerazione di Coriolis</title>
+    <!-- Stesso ambiente di Sandcastle: Cesium come variabile globale
+         e un contenitore #cesiumContainer a tutta pagina. -->
+    <link rel="stylesheet" href="/Cesium/Widgets/widgets.css">
+    <style>
+        html, body, #cesiumContainer {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+    </style>
+    <script>window.CESIUM_BASE_URL = "/Cesium/";</script>
+    <script src="/Cesium/Cesium.js"></script>
+</head>
+<body>
+    <div id="cesiumContainer"></div>
+    <!-- Lo stesso file che si incolla in Sandcastle. -->
+    <script src="/dist/sandcastle.js"></script>
+</body>
+</html>

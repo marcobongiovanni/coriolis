@@ -1,0 +1,11 @@
+{
+    // Suggerimenti e controlli di VS Code per il codice JavaScript,
+    // compresi i tipi di Cesium (inclusi nel pacchetto npm).
+    "compilerOptions": {
+        "module": "ESNext",
+        "moduleResolution": "Bundler",
+        "target": "ES2022",
+        "checkJs": false
+    },
+    "include": ["src", "test", "e2e", "scripts"]
+}

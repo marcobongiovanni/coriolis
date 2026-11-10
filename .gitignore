@@ -1,0 +1,14 @@
+# Dipendenze installate da npm
+node_modules/
+
+# File generati (build e report dei test)
+dist/
+test-results/
+playwright-report/
+
+# VS Code: si conservano solo le impostazioni condivise del progetto
+# (estensioni consigliate, debug, task); il resto è personale.
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json

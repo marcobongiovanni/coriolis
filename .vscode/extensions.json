@@ -1,0 +1,7 @@
+{
+    // Estensioni consigliate: VS Code le propone all'apertura della cartella.
+    "recommendations": [
+        "vitest.explorer",
+        "ms-playwright.playwright"
+    ]
+}
