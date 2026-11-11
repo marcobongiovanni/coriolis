@@ -80,6 +80,56 @@ test("la pagina si carica senza errori", async ({ page }) => {
     await expectNoErrors(page, errors);
 });
 
+// Estensione della Terra sullo schermo: proietta molti punti del bordo
+// del disco visto dalla telecamera e verifica che il diametro sia la
+// frazione attesa della larghezza ("width") o dell'altezza ("height")
+// della vista. Se la frazione è al massimo 1, il disco deve stare
+// tutto dentro la vista lungo quel lato.
+async function expectEarthExtentFraction(page, side, fraction) {
+    const extent = await page.evaluate((side) => {
+        const { viewer } = window.__coriolis;
+        const camera = viewer.camera;
+        const C3 = Cesium.Cartesian3;
+        const R = Cesium.Ellipsoid.WGS84.maximumRadius;
+        const toCam = C3.normalize(camera.positionWC, new C3());
+        const D = C3.magnitude(camera.positionWC);
+        const limbCenter = C3.multiplyByScalar(toCam, R * R / D, new C3());
+        const limbRadius = R * Math.sqrt(1 - (R / D) ** 2);
+        // Base del piano del bordo (asse ausiliario non parallelo a toCam).
+        const aux = Math.abs(toCam.z) < 0.9 ? C3.UNIT_Z : C3.UNIT_X;
+        const u1 = C3.normalize(C3.cross(toCam, aux, new C3()), new C3());
+        const u2 = C3.cross(toCam, u1, new C3());
+        let min = Infinity;
+        let max = -Infinity;
+        for (let i = 0; i < 3600; i++) {
+            const t = (2 * Math.PI * i) / 3600;
+            const p = C3.add(
+                limbCenter,
+                C3.add(
+                    C3.multiplyByScalar(u1, limbRadius * Math.cos(t), new C3()),
+                    C3.multiplyByScalar(u2, limbRadius * Math.sin(t), new C3()),
+                    new C3()
+                ),
+                new C3()
+            );
+            const xy = viewer.scene.cartesianToCanvasCoordinates(p);
+            if (xy) {
+                const value = side === "width" ? xy.x : xy.y;
+                min = Math.min(min, value);
+                max = Math.max(max, value);
+            }
+        }
+        const canvas = viewer.scene.canvas;
+        const size = side === "width" ? canvas.clientWidth : canvas.clientHeight;
+        return { min: min, max: max, size: size };
+    }, side);
+    expect(Math.abs((extent.max - extent.min) / extent.size - fraction)).toBeLessThan(0.005);
+    if (fraction <= 1) {
+        expect(extent.min).toBeGreaterThan(0);
+        expect(extent.max).toBeLessThan(extent.size);
+    }
+}
+
 // Verifica l'inquadratura iniziale: la telecamera guarda la sfera da
 // azimuth 150° (sud-sud-est) ed elevazione 45° nella terna locale del punto
 // di partenza, con Up complanare a normale e direzione di vista (e
@@ -100,47 +150,13 @@ async function expectEarthFramedOnStartPoint(page) {
         C3.normalize(local, local);
 
         const toSphere = C3.normalize(C3.negate(offset, new C3()), new C3());
-        const canvas = viewer.scene.canvas;
-        // Larghezza della Terra sullo schermo: proietta molti punti
-        // del bordo del disco visto dalla telecamera e ne prende
-        // l'estensione orizzontale in pixel.
-        const R = Cesium.Ellipsoid.WGS84.maximumRadius;
-        const toCam = C3.normalize(camera.positionWC, new C3());
-        const D = C3.magnitude(camera.positionWC);
-        const limbCenter = C3.multiplyByScalar(toCam, R * R / D, new C3());
-        const limbRadius = R * Math.sqrt(1 - (R / D) ** 2);
-        const u1 = C3.normalize(C3.cross(toCam, C3.UNIT_Z, new C3()), new C3());
-        const u2 = C3.cross(toCam, u1, new C3());
-        let minX = Infinity;
-        let maxX = -Infinity;
-        for (let i = 0; i < 3600; i++) {
-            const t = (2 * Math.PI * i) / 3600;
-            const p = C3.add(
-                limbCenter,
-                C3.add(
-                    C3.multiplyByScalar(u1, limbRadius * Math.cos(t), new C3()),
-                    C3.multiplyByScalar(u2, limbRadius * Math.sin(t), new C3()),
-                    new C3()
-                ),
-                new C3()
-            );
-            const xy = viewer.scene.cartesianToCanvasCoordinates(p);
-            if (xy) {
-                minX = Math.min(minX, xy.x);
-                maxX = Math.max(maxX, xy.x);
-            }
-        }
-
         return {
             azimuth: Cesium.Math.toDegrees(Math.atan2(local.x, local.y)),
             elevation: Cesium.Math.toDegrees(Math.asin(local.z)),
             lookAtSphere: C3.dot(toSphere, camera.directionWC),
             // Prodotto misto: 0 se Up, normale e direzione sono complanari.
             coplanarity: C3.dot(camera.upWC, C3.cross(normal, camera.directionWC, new C3())),
-            upAlongNormal: C3.dot(camera.upWC, normal),
-            earthLeft: minX,
-            earthRight: maxX,
-            width: canvas.clientWidth
+            upAlongNormal: C3.dot(camera.upWC, normal)
         };
     });
     expect(framing.azimuth).toBeCloseTo(150, 3);
@@ -148,11 +164,7 @@ async function expectEarthFramedOnStartPoint(page) {
     expect(framing.lookAtSphere).toBeCloseTo(1, 6);
     expect(Math.abs(framing.coplanarity)).toBeLessThan(1e-6);
     expect(framing.upAlongNormal).toBeGreaterThan(0);
-    // La Terra occupa il 95% della larghezza, tutta dentro la vista.
-    const earthWidth = framing.earthRight - framing.earthLeft;
-    expect(Math.abs(earthWidth / framing.width - 0.95)).toBeLessThan(0.005);
-    expect(framing.earthLeft).toBeGreaterThan(0);
-    expect(framing.earthRight).toBeLessThan(framing.width);
+    await expectEarthExtentFraction(page, "width", 0.95);
     return framing;
 }
 
@@ -376,5 +388,212 @@ test("i comandi della telecamera corrispondono al pannello di aiuto", async ({ p
     const afterTilt = await pose();
     expect(Math.abs(afterTilt.pitch - afterZoom.pitch)).toBeGreaterThan(0.01);
 
+    await expectNoErrors(page, errors);
+});
+
+// Posa attuale della telecamera (in ECEF) e tempo simulato.
+function cameraPose(page) {
+    return page.evaluate(() => {
+        const { viewer } = window.__coriolis;
+        const camera = viewer.camera;
+        return {
+            time: Cesium.JulianDate.secondsDifference(
+                viewer.clock.currentTime, viewer.clock.startTime
+            ),
+            position: Cesium.Cartesian3.clone(camera.positionWC),
+            direction: Cesium.Cartesian3.clone(camera.directionWC),
+            up: Cesium.Cartesian3.clone(camera.upWC)
+        };
+    });
+}
+
+function distance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+// Ruota un vettore ECEF attorno all'asse Z come fa la Terra in "dt"
+// secondi, visto da ECEF: un punto fermo in ECI, in ECEF ruota di -ω·dt.
+function rotateEcef(v, dt) {
+    const angle = -7.292115e-5 * dt;
+    return {
+        x: Math.cos(angle) * v.x - Math.sin(angle) * v.y,
+        y: Math.sin(angle) * v.x + Math.cos(angle) * v.y,
+        z: v.z
+    };
+}
+
+// Stessa posa, a meno di errori numerici.
+function expectSamePose(a, b) {
+    expect(distance(a.position, b.position)).toBeLessThan(1);
+    expect(distance(a.direction, b.direction)).toBeLessThan(1e-9);
+    expect(distance(a.up, b.up)).toBeLessThan(1e-9);
+}
+
+test("cambio di telecamera ECI/ECEF senza cambio di vista", async ({ page }) => {
+    const errors = await openApp(page);
+    const eciRadio = page.getByLabel("Camera ECI");
+    const ecefRadio = page.getByLabel("Camera in ECEF");
+
+    // Predefinita: telecamera ECI, con l'inquadratura iniziale.
+    await expect(eciRadio).toBeChecked();
+    await expect(ecefRadio).not.toBeChecked();
+    await expectEarthFramedOnStartPoint(page);
+
+    // Simulazione avanzata in ECI: la telecamera è ferma in ECI, quindi
+    // in ECEF ruota di -ω·Δt attorno all'asse Z.
+    const start = await cameraPose(page);
+    await runFor(page, 1000);
+    const eciLater = await cameraPose(page);
+    const dt = eciLater.time - start.time;
+    expect(dt).toBeGreaterThan(0);
+    expect(distance(eciLater.position, rotateEcef(start.position, dt))).toBeLessThan(1);
+
+    // Passaggio a ECEF (in pausa): la vista non cambia.
+    await ecefRadio.check();
+    expect(await page.evaluate(() => window.__coriolis.cameraMode)).toBe("ecef");
+    const atEcefSwitch = await cameraPose(page);
+    expectSamePose(atEcefSwitch, eciLater);
+
+    // In ECEF la telecamera resta ferma rispetto alla Terra.
+    await runFor(page, 1000);
+    const ecefLater = await cameraPose(page);
+    expect(ecefLater.time).toBeGreaterThan(atEcefSwitch.time);
+    expectSamePose(ecefLater, atEcefSwitch);
+
+    // Ritorno a ECI durante la simulazione: la vista non cambia, poi
+    // la telecamera torna a restare ferma in ECI.
+    await playButton(page).click();
+    await page.waitForTimeout(300);
+    const beforeEciSwitch = await cameraPose(page);
+    await eciRadio.check();
+    await playButton(page).click();
+    expect(await page.evaluate(() => window.__coriolis.cameraMode)).toBe("eci");
+    const atEciSwitch = await cameraPose(page);
+    // Nessun salto: fino al cambio la telecamera è ferma in ECEF, dopo
+    // ruota con la Terra; lo spostamento non può superare la rotazione
+    // di tutto l'intervallo.
+    const maxRotation = distance(
+        beforeEciSwitch.position,
+        rotateEcef(beforeEciSwitch.position, atEciSwitch.time - beforeEciSwitch.time)
+    );
+    expect(distance(atEciSwitch.position, beforeEciSwitch.position))
+        .toBeLessThanOrEqual(maxRotation + 1);
+
+    await runFor(page, 1000);
+    const eciAgain = await cameraPose(page);
+    expect(distance(
+        eciAgain.position,
+        rotateEcef(atEciSwitch.position, eciAgain.time - atEciSwitch.time)
+    )).toBeLessThan(1);
+    await expectNoErrors(page, errors);
+});
+
+test("pan con Shift + trascinamento destro: trasla senza ruotare", async ({ page }) => {
+    const errors = await openApp(page);
+    const canvas = page.locator("#cesiumContainer canvas").first();
+    const box = await canvas.boundingBox();
+    // Punto di partenza sul globo, un po' sotto il centro della vista.
+    const start = { x: box.width / 2, y: box.height / 2 + 100 };
+    const delta = { x: 120, y: -80 };
+
+    for (const mode of ["eci", "ecef"]) {
+        if (mode === "ecef") {
+            await page.getByLabel("Camera in ECEF").check();
+        }
+
+        // Punto della Terra (ellissoide) sotto il cursore.
+        const before = await page.evaluate((start) => {
+            const camera = window.__coriolis.viewer.camera;
+            const grabbed = camera.pickEllipsoid(
+                new Cesium.Cartesian2(start.x, start.y), Cesium.Ellipsoid.WGS84
+            );
+            return {
+                grabbed: grabbed,
+                position: Cesium.Cartesian3.clone(camera.positionWC),
+                direction: Cesium.Cartesian3.clone(camera.directionWC)
+            };
+        }, start);
+        expect(before.grabbed).toBeDefined();
+
+        await page.keyboard.down("Shift");
+        await page.mouse.move(box.x + start.x, box.y + start.y);
+        await page.mouse.down({ button: "right" });
+        await page.mouse.move(box.x + start.x + delta.x, box.y + start.y + delta.y, { steps: 10 });
+        await page.mouse.up({ button: "right" });
+        await page.keyboard.up("Shift");
+        await page.waitForTimeout(300);
+
+        const after = await page.evaluate((grabbed) => {
+            const { viewer } = window.__coriolis;
+            const camera = viewer.camera;
+            const p = new Cesium.Cartesian3(grabbed.x, grabbed.y, grabbed.z);
+            return {
+                screen: viewer.scene.cartesianToCanvasCoordinates(p),
+                position: Cesium.Cartesian3.clone(camera.positionWC),
+                direction: Cesium.Cartesian3.clone(camera.directionWC)
+            };
+        }, before.grabbed);
+
+        // La telecamera si è spostata ma non ha ruotato.
+        const moved = Math.hypot(
+            after.position.x - before.position.x,
+            after.position.y - before.position.y,
+            after.position.z - before.position.z
+        );
+        expect(moved).toBeGreaterThan(1000);
+        const turned = Math.hypot(
+            after.direction.x - before.direction.x,
+            after.direction.y - before.direction.y,
+            after.direction.z - before.direction.z
+        );
+        expect(turned).toBeLessThan(1e-9);
+
+        // Il punto afferrato ha seguito il cursore.
+        expect(Math.abs(after.screen.x - (start.x + delta.x))).toBeLessThan(2);
+        expect(Math.abs(after.screen.y - (start.y + delta.y))).toBeLessThan(2);
+    }
+    await expectNoErrors(page, errors);
+});
+
+test("pan verticale in ECI: la Terra supera il centro della vista", async ({ page }) => {
+    // Regressione: camera.setView, riapplicato a ogni frame, alterava la
+    // direzione quando la telecamera guardava verso il centro della Terra
+    // (inclinazione -90°) e la Terra non saliva oltre il centro.
+    const errors = await openApp(page);
+    const box = await page.locator("#cesiumContainer canvas").first().boundingBox();
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+
+    const state = () => page.evaluate(() => {
+        const { viewer } = window.__coriolis;
+        const center = viewer.scene.cartesianToCanvasCoordinates(Cesium.Cartesian3.ZERO);
+        return {
+            centerY: center.y,
+            direction: Cesium.Cartesian3.clone(viewer.camera.directionWC)
+        };
+    });
+
+    const initial = await state();
+    let previousY = initial.centerY;
+    for (let i = 0; i < 4; i++) {
+        await page.keyboard.down("Shift");
+        await page.mouse.move(x, y);
+        await page.mouse.down({ button: "right" });
+        await page.mouse.move(x, y - 200, { steps: 10 });
+        await page.mouse.up({ button: "right" });
+        await page.keyboard.up("Shift");
+        await page.waitForTimeout(300);
+
+        const current = await state();
+        expect(current.centerY).toBeLessThan(previousY - 50);
+        expect(Math.hypot(
+            current.direction.x - initial.direction.x,
+            current.direction.y - initial.direction.y,
+            current.direction.z - initial.direction.z
+        )).toBeLessThan(1e-9);
+        previousY = current.centerY;
+    }
+    // Il centro della Terra è salito oltre il centro della vista.
+    expect(previousY).toBeLessThan(box.height / 2 - 50);
     await expectNoErrors(page, errors);
 });

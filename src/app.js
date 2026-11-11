@@ -95,28 +95,34 @@ const CAMERA_AZIMUTH_DEG = 150;    // Dal Nord, in senso orario [°]
 const CAMERA_ELEVATION_DEG = 45;   // Sopra l'orizzonte locale [°]
 const EARTH_WIDTH_FRACTION = 0.95; // Larghezza della Terra / larghezza della vista
 
-// Tangente del semiangolo orizzontale del campo visivo.
-function tanHalfFovHorizontal() {
+// Tangente del semiangolo del campo visivo lungo la larghezza
+// ("width") o l'altezza ("height") della vista.
+function tanHalfFov(side) {
     const width = viewer.container.clientWidth || 1;
     const height = viewer.container.clientHeight || 1;
     // In Cesium "fov" vale per il lato più lungo della vista.
-    const tanHalfFov = Math.tan(viewer.camera.frustum.fov / 2);
-    return width >= height ? tanHalfFov : tanHalfFov * width / height;
+    const tanLong = Math.tan(viewer.camera.frustum.fov / 2);
+    const size = side === "width" ? width : height;
+    return tanLong * size / Math.max(width, height);
 }
 
-// Frazione della larghezza della vista occupata dalla Terra, vista da
-// "position" lungo "direction" con il vettore "up" (Infinity se la
-// Terra esce dai lati o la telecamera è troppo vicina).
+// Frazione della larghezza ("width") o dell'altezza ("height") della
+// vista occupata dal diametro del disco terrestre, vista da "position"
+// lungo "direction" con il vettore "up" (Infinity se la telecamera è
+// troppo vicina). Può essere maggiore di 1 se la Terra esce dalla vista.
 //
-// I bordi sinistro e destro del disco sono dati dai due piani tangenti
-// alla Terra che contengono la retta per la telecamera parallela a Up:
-// nel piano (destra, direzione) il centro della Terra sta all'angolo
+// I bordi del disco sono dati dai due piani tangenti alla Terra che
+// contengono la retta per la telecamera perpendicolare al lato misurato
+// (parallela a Up per la larghezza, a Destra per l'altezza): nel piano
+// (asse del lato, direzione) il centro della Terra sta all'angolo
 // a = atan2(x, z) e i piani tangenti a a ± asin(R / distanza).
-function earthWidthFraction(position, direction, up, tanHalfFov) {
+function earthExtentFraction(position, direction, up, side) {
     const C3 = Cesium.Cartesian3;
-    const right = C3.cross(direction, up, new C3());
+    const axis = side === "width"
+        ? C3.cross(direction, up, new C3()) // Destra
+        : up;
     const toCenter = C3.negate(position, new C3());
-    const x = C3.dot(toCenter, right);
+    const x = C3.dot(toCenter, axis);
     const z = C3.dot(toCenter, direction);
     const distance = Math.hypot(x, z);
     const radius = Cesium.Ellipsoid.WGS84.maximumRadius;
@@ -128,7 +134,7 @@ function earthWidthFraction(position, direction, up, tanHalfFov) {
     if (a + b >= Math.PI / 2 || a - b <= -Math.PI / 2) {
         return Infinity;
     }
-    return (Math.tan(a + b) - Math.tan(a - b)) / (2 * tanHalfFov);
+    return (Math.tan(a + b) - Math.tan(a - b)) / (2 * tanHalfFov(side));
 }
 
 // Imposta la posa ECI della telecamera. Va chiamata a t = 0, quando
@@ -170,39 +176,68 @@ function centerCameraOnStartPoint() {
     Cesium.Cartesian3.subtract(normal3, projection, cameraUpECI_current);
     Cesium.Cartesian3.normalize(cameraUpECI_current, cameraUpECI_current);
 
-    // Distanza a cui la Terra occupa EARTH_WIDTH_FRACTION della
-    // larghezza (bisezione: allontanandosi la Terra rimpicciolisce).
-    const tanHalfFov = tanHalfFovHorizontal();
+    placeCameraForEarthExtent(
+        target,
+        offset,
+        cameraDirectionECI_current,
+        cameraUpECI_current,
+        "width",
+        EARTH_WIDTH_FRACTION,
+        cameraPositionECI_current
+    );
+}
+
+// Posizione della telecamera sulla semiretta target + d·offset (offset
+// versore), con orientamento direction/up, alla distanza d a cui il
+// diametro della Terra è "fraction" volte la larghezza ("width") o
+// l'altezza ("height") della vista (bisezione: allontanandosi la Terra
+// rimpicciolisce). Vale in ECI e in ECEF: serve solo che il centro
+// della Terra sia nell'origine.
+function placeCameraForEarthExtent(target, offset, direction, up, side, fraction, result) {
+    function cameraAt(distance, position) {
+        return Cesium.Cartesian3.add(
+            target,
+            Cesium.Cartesian3.multiplyByScalar(offset, distance, position),
+            position
+        );
+    }
     const candidate = new Cesium.Cartesian3();
     function fractionAt(distance) {
-        Cesium.Cartesian3.add(
-            target,
-            Cesium.Cartesian3.multiplyByScalar(offset, distance, candidate),
-            candidate
-        );
-        return earthWidthFraction(
-            candidate, cameraDirectionECI_current, cameraUpECI_current, tanHalfFov
-        );
+        return earthExtentFraction(cameraAt(distance, candidate), direction, up, side);
     }
     let near = 0;
     let far = 1.0e7;
-    while (fractionAt(far) > EARTH_WIDTH_FRACTION) {
+    while (fractionAt(far) > fraction) {
         far *= 2;
     }
     for (let i = 0; i < 50; i++) {
         const mid = 0.5 * (near + far);
-        if (fractionAt(mid) > EARTH_WIDTH_FRACTION) {
+        if (fractionAt(mid) > fraction) {
             near = mid;
         } else {
             far = mid;
         }
     }
-    Cesium.Cartesian3.add(
-        target,
-        Cesium.Cartesian3.multiplyByScalar(offset, far, candidate),
-        cameraPositionECI_current
-    );
+    return cameraAt(far, result);
 }
+
+// --------------------------------------------------
+// TELECAMERA FISSA IN ECI O SOLIDALE CON LA TERRA (ECEF)
+// --------------------------------------------------
+//
+// Il pannello sceglie in quale sistema la telecamera resta ferma:
+//   - "Camera ECI" (predefinita): ferma nello spazio inerziale; la
+//     posa ECI è riapplicata a ogni frame, quindi la Terra ruota sullo
+//     schermo;
+//   - "Camera in ECEF": solidale con la Terra (la Terra appare
+//     immobile). La posa di Cesium è già in coordinate ECEF, quindi
+//     basta non toccarla.
+// Il cambio non sposta la telecamera: la vista resta identica e da quel
+// momento è mantenuta nel nuovo sistema. Solo l'inquadratura iniziale
+// segue le regole di centerCameraOnStartPoint(). In entrambi i casi i
+// comandi del mouse restano attivi.
+
+let cameraMode = "eci"; // "eci" oppure "ecef"
 
 // --------------------------------------------------
 // MEMORIZZAZIONE DELL'ULTIMA POSA IMPOSTATA
@@ -292,14 +327,34 @@ function captureCameraECI() {
 // APPLICAZIONE DELLA POSA INERZIALE ALLA TELECAMERA
 // --------------------------------------------------
 
+// Imposta direttamente posizione e assi della telecamera (in ECEF).
+//
+// Non si usa camera.setView: converte direzione e Up in rotta,
+// inclinazione e rollio locali, rappresentazione degenere quando la
+// telecamera guarda verso il centro della Terra (inclinazione -90°).
+// Riapplicata a ogni frame, quella conversione alterava la direzione
+// e impediva di spostare la Terra oltre quel punto con il pan.
+function setCameraPose(position, direction, up) {
+    const camera = viewer.camera;
+    if (!Cesium.Matrix4.equals(camera.transform, Cesium.Matrix4.IDENTITY)) {
+        camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    }
+    Cesium.Cartesian3.clone(position, camera.position);
+    Cesium.Cartesian3.normalize(direction, camera.direction);
+    // Terna ortonormale: Destra = Direzione × Up, poi Up ricalcolato.
+    Cesium.Cartesian3.normalize(
+        Cesium.Cartesian3.cross(camera.direction, up, camera.right),
+        camera.right
+    );
+    Cesium.Cartesian3.cross(camera.right, camera.direction, camera.up);
+}
+
 function applyCameraECI() {
-    viewer.camera.setView({
-        destination: eciToEcef(cameraPositionECI_current, earthAngle),
-        orientation: {
-            direction: eciToEcef(cameraDirectionECI_current, earthAngle),
-            up: eciToEcef(cameraUpECI_current, earthAngle)
-        }
-    });
+    setCameraPose(
+        eciToEcef(cameraPositionECI_current, earthAngle),
+        eciToEcef(cameraDirectionECI_current, earthAngle),
+        eciToEcef(cameraUpECI_current, earthAngle)
+    );
 
     // Registra la posa impostata dallo script,
     // così non verrà scambiata per un movimento dell'utente.
@@ -848,14 +903,72 @@ controller.lookEventTypes = {
 controller.translateEventTypes = Cesium.CameraEventType.LEFT_DRAG;
 
 // --------------------------------------------------
+// PAN: SHIFT + TRASCINAMENTO CON IL TASTO DESTRO
+// --------------------------------------------------
+//
+// In 3D Cesium non ha uno spostamento laterale vero: il "Pan view" del
+// pannello di aiuto fa ruotare il globo. Questo gesto (non usato da
+// Cesium) trasla invece la telecamera parallelamente allo schermo,
+// senza cambiarne l'orientamento.
+//
+// La scala è scelta in modo che il punto della Terra sotto il cursore
+// all'inizio del trascinamento segua il cursore: lo spostamento in
+// metri di un pixel vale 2·p·tan(fovy/2) / altezza della vista, dove p
+// è la profondità di quel punto lungo la direzione di vista. Se il
+// cursore è nello spazio si usa la profondità del centro della Terra.
+//
+// Lo spostamento passa per la normale gestione della posa: con la
+// telecamera ECI viene acquisito come movimento dell'utente, con quella
+// ECEF resta solidale con la Terra.
+
+const panHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+let panDepth = undefined; // Profondità del punto afferrato [m]; undefined = nessun pan
+
+function panReferenceDepth(windowPosition) {
+    const camera = viewer.camera;
+    const picked = camera.pickEllipsoid(windowPosition, Cesium.Ellipsoid.WGS84);
+    const target = Cesium.defined(picked) ? picked : Cesium.Cartesian3.ZERO;
+    const offset = Cesium.Cartesian3.subtract(target, camera.positionWC, new Cesium.Cartesian3());
+    return Math.max(Cesium.Cartesian3.dot(offset, camera.directionWC), 1);
+}
+
+panHandler.setInputAction(function (click) {
+    panDepth = panReferenceDepth(click.position);
+}, Cesium.ScreenSpaceEventType.RIGHT_DOWN, Cesium.KeyboardEventModifier.SHIFT);
+
+panHandler.setInputAction(function (movement) {
+    if (panDepth === undefined) {
+        return;
+    }
+    const camera = viewer.camera;
+    const height = viewer.scene.canvas.clientHeight || 1;
+    const metersPerPixel = 2 * panDepth * Math.tan(camera.frustum.fovy / 2) / height;
+    const dx = movement.endPosition.x - movement.startPosition.x;
+    const dy = movement.endPosition.y - movement.startPosition.y;
+    // La scena segue il cursore: la telecamera si sposta al contrario.
+    camera.moveLeft(dx * metersPerPixel);
+    camera.moveUp(dy * metersPerPixel);
+}, Cesium.ScreenSpaceEventType.MOUSE_MOVE, Cesium.KeyboardEventModifier.SHIFT);
+
+// Fine del pan al rilascio del tasto, con o senza Shift premuto.
+function endPan() {
+    panDepth = undefined;
+}
+panHandler.setInputAction(endPan, Cesium.ScreenSpaceEventType.RIGHT_UP);
+panHandler.setInputAction(
+    endPan, Cesium.ScreenSpaceEventType.RIGHT_UP, Cesium.KeyboardEventModifier.SHIFT
+);
+
+// --------------------------------------------------
 // AGGIORNAMENTO DELLA SIMULAZIONE
 // --------------------------------------------------
 
 viewer.scene.preRender.addEventListener(function (scene, time) {
 
     // 1. Se l'utente ha mosso la telecamera, acquisisce la nuova
-    //    posa in ECI usando l'angolo del frame precedente.
-    if (cameraPoseHasChanged()) {
+    //    posa in ECI usando l'angolo del frame precedente
+    //    (solo con la telecamera ECI: in ECEF la posa non si tocca).
+    if (cameraMode === "eci" && cameraPoseHasChanged()) {
         captureCameraECI();
         cameraMovedByUser = true;
     }
@@ -870,8 +983,11 @@ viewer.scene.preRender.addEventListener(function (scene, time) {
     // della sfera a questo istante.
     updateTrack();
 
-    // 3. Mantiene la telecamera fissa in ECI.
-    applyCameraECI();
+    // 3. Telecamera fissa in ECI. In ECEF non serve far nulla: la
+    //    posa di Cesium è già solidale con la Terra.
+    if (cameraMode === "eci") {
+        applyCameraECI();
+    }
 
     // 4. Terne di riferimento: dopo la telecamera, così la loro
     //    dimensione a schermo usa la posa di questo frame.
@@ -967,6 +1083,21 @@ panelStyle.textContent = `
 }
 #simPanel .sim-visibility input[type="checkbox"] {
     justify-self: center;
+    margin: 0;
+}
+/* Scelta della telecamera (radio button) sotto le caselle. */
+#simPanel .sim-camera-mode {
+    display: flex;
+    gap: 16px;
+    margin-top: 10px;
+}
+#simPanel .sim-camera-mode label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+#simPanel .sim-camera-mode input {
     margin: 0;
 }
 #simPanel button {
@@ -1321,6 +1452,48 @@ visibilityText("Relativi (ECEF)", "sim-colhead");
     visibilityCheckbox(item.label + " ECI", item.eci);
     visibilityCheckbox(item.label + " ECEF", item.ecef);
 });
+
+// Telecamera: fissa in ECI (predefinita) o solidale con la Terra sopra
+// la sfera. Si può cambiare anche durante la simulazione.
+
+const cameraModeRow = document.createElement("div");
+cameraModeRow.className = "sim-camera-mode";
+visibilitySection.appendChild(cameraModeRow);
+
+function cameraModeRadio(mode, labelText) {
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "simCameraMode";
+    radio.value = mode;
+    radio.checked = mode === cameraMode;
+    radio.addEventListener("change", function () {
+        if (radio.checked) {
+            setCameraMode(mode);
+        }
+    });
+    label.appendChild(radio);
+    label.appendChild(document.createTextNode(labelText));
+    cameraModeRow.appendChild(label);
+}
+
+cameraModeRadio("eci", "Camera ECI");
+cameraModeRadio("ecef", "Camera in ECEF");
+
+const panNote = document.createElement("div");
+panNote.className = "sim-note";
+panNote.textContent = "Spostamento laterale: Shift + trascinamento con il tasto destro";
+visibilitySection.appendChild(panNote);
+
+function setCameraMode(mode) {
+    if (mode === "eci" && cameraMode !== "eci") {
+        // La posa attuale diventa quella da mantenere ferma in ECI
+        // (convertita con l'angolo terrestre di questo istante).
+        captureCameraECI();
+    }
+    // Passando a ECEF non serve nulla: la telecamera resta dov'è.
+    cameraMode = mode;
+}
 
 // --- Stato ------------------------------------------------------------
 
@@ -1721,7 +1894,9 @@ function requestGeographicStartPoint() {
 
             if (!cameraMovedByUser) {
                 centerCameraOnStartPoint();
-                applyCameraECI();
+                if (cameraMode === "eci") {
+                    applyCameraECI();
+                }
             }
         },
         function (error) {
@@ -1751,6 +1926,9 @@ window.__coriolis = {
     viewer: viewer,
     settings: settings,
     physics: physics,
+    get cameraMode() {
+        return cameraMode;
+    },
     arrows: {
         absolute: absoluteVelocityArrow,
         relative: relativeVelocityArrow
