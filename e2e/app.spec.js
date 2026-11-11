@@ -207,7 +207,8 @@ test("play/pausa: durante la simulazione i controlli sono disattivati", async ({
     await expect(pickButton(page)).toBeDisabled();
     await expect(page.getByLabel("Latitudine [°]")).toBeDisabled();
     await expect(page.getByLabel("Modulo [km/h] relativa (ECEF)")).toBeDisabled();
-    await expect(page.getByLabel("Usa Terra sferica")).toBeDisabled();
+    await expect(page.getByLabel("Sfera", { exact: true })).toBeDisabled();
+    await expect(page.getByLabel("Ellissoide")).toBeDisabled();
     // Le caselle di visualizzazione restano attive.
     await expect(page.getByTitle("Velocità ECI")).toBeEnabled();
 
@@ -243,7 +244,7 @@ test("la sfera cade e accelera", async ({ page }) => {
     await playButton(page).click();
     await expect.poll(() => statusValue(page, "Quota")).toBeLessThan(altitude0 - 10);
     await playButton(page).click();
-    expect(await statusValue(page, "v ECEF")).toBeGreaterThan(0);
+    expect(await statusValue(page, "Velocità ECEF")).toBeGreaterThan(0);
     await expectNoErrors(page, errors);
 });
 
@@ -305,7 +306,7 @@ test("velocità relativa e assoluta restano coerenti", async ({ page }) => {
         return Math.hypot(v.x + OMEGA * p.y, v.y - OMEGA * p.x, v.z) * 3.6;
     });
     expect(relativeKmh).toBeCloseTo(1000, 6);
-    expect(await statusValue(page, "v ECEF")).toBe(1000);
+    expect(await statusValue(page, "Velocità ECEF")).toBe(1000);
 
     // La terna assoluta è stata ricalcolata e corrisponde allo stato.
     const absoluteField = parseFloat(
@@ -432,7 +433,7 @@ function expectSamePose(a, b) {
 test("cambio di telecamera ECI/ECEF senza cambio di vista", async ({ page }) => {
     const errors = await openApp(page);
     const eciRadio = page.getByLabel("Camera ECI");
-    const ecefRadio = page.getByLabel("Camera in ECEF");
+    const ecefRadio = page.getByLabel("Camera ECEF");
 
     // Predefinita: telecamera ECI, con l'inquadratura iniziale.
     await expect(eciRadio).toBeChecked();
@@ -498,7 +499,7 @@ test("pan con Shift + trascinamento destro: trasla senza ruotare", async ({ page
 
     for (const mode of ["eci", "ecef"]) {
         if (mode === "ecef") {
-            await page.getByLabel("Camera in ECEF").check();
+            await page.getByLabel("Camera ECEF").check();
         }
 
         // Punto della Terra (ellissoide) sotto il cursore.
@@ -595,5 +596,63 @@ test("pan verticale in ECI: la Terra supera il centro della vista", async ({ pag
     }
     // Il centro della Terra è salito oltre il centro della vista.
     expect(previousY).toBeLessThan(box.height / 2 - 50);
+    await expectNoErrors(page, errors);
+});
+
+test("stato: la Posizione della sfera si aggiorna durante la simulazione", async ({ page }) => {
+    const errors = await openApp(page);
+    const statusLines = async () =>
+        (await page.locator(".sim-status").textContent()).split("\n");
+
+    // Voci dello stato, nell'ordine; nessuna voce "Angolo".
+    const labels = (await statusLines()).map((line) => line.split(":")[0]);
+    expect(labels).toEqual(["Posizione", "Tempo", "Quota", "Velocità ECEF", "Velocità ECI"]);
+
+    async function position() {
+        const line = (await statusLines()).find((l) => l.startsWith("Posizione:"));
+        const [lat, lon] = line.slice("Posizione:".length).split(",").map(parseFloat);
+        return { lat, lon };
+    }
+
+    // A t = 0 la sfera è sul punto di partenza.
+    const start = await position();
+    const settings = await page.evaluate(() => window.__coriolis.settings);
+    expect(start.lat).toBeCloseTo(settings.startLatitudeDeg, 1);
+    expect(start.lon).toBeCloseTo(settings.startLongitudeDeg, 1);
+
+    // Lanciata verso Est, la sfera cambia posizione.
+    const altitude = page.getByLabel("Quota di partenza [km]");
+    await altitude.fill("1000");
+    await altitude.press("Enter");
+    const speed = page.getByLabel("Modulo [km/h] relativa (ECEF)");
+    await speed.fill("20000");
+    await page.getByLabel("Azimuth [°] relativa (ECEF)").fill("90");
+    await page.getByLabel("Azimuth [°] relativa (ECEF)").press("Enter");
+    await runFor(page, 1500);
+    const later = await position();
+    expect(Math.abs(later.lon - start.lon)).toBeGreaterThan(1);
+    await expectNoErrors(page, errors);
+});
+
+test("modello di Terra: Sfera (predefinito) o Ellissoide", async ({ page }) => {
+    const errors = await openApp(page);
+    const sphere = page.getByLabel("Sfera", { exact: true });
+    const ellipsoid = page.getByLabel("Ellissoide");
+    const useSpherical = () => page.evaluate(() => window.__coriolis.settings.useSphericalEarth);
+
+    await expect(sphere).toBeChecked();
+    await expect(ellipsoid).not.toBeChecked();
+    expect(await useSpherical()).toBe(true);
+
+    // Il cambio di modello fa ripartire la simulazione da t = 0.
+    await runFor(page, 500);
+    await stopButton(page).click();
+    await ellipsoid.check();
+    await expect(sphere).not.toBeChecked();
+    expect(await useSpherical()).toBe(false);
+    expect(await statusValue(page, "Tempo")).toBe(0);
+
+    await sphere.check();
+    expect(await useSpherical()).toBe(true);
     await expectNoErrors(page, errors);
 });

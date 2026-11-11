@@ -65,7 +65,7 @@ export function ecefToEci(position, angle) {
 // FISICA DELLA SFERA (IN ECI)
 // --------------------------------------------------
 //
-// Due modelli, scelti con il flag "Usa Terra sferica":
+// Due modelli, scelti nel pannello (Modello: "Sfera" o "Ellissoide"):
 //
 // TERRA SFERICA (default)
 // - Gravità: legge di gravitazione universale, a = -GM·r/|r|^3.
@@ -104,7 +104,8 @@ export function ecefToEci(position, angle) {
 // proprietà.
 
 export const settings = {
-    // Modello di Terra usato da gravità e urti ("Usa Terra sferica").
+    // Modello di Terra usato da gravità e urti: true = "Sfera",
+    // false = "Ellissoide" (radio button nel pannello).
     useSphericalEarth: true,
 
     // Latitudine geodetica [-90°, +90°] e longitudine [0°, 360°)

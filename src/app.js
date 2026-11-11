@@ -14,6 +14,7 @@ import {
     computeInitialState,
     ecefToEci,
     eciToEcef,
+    normalizeLongitude,
     physics,
     relativeVelocityECI,
     resetPhysics,
@@ -229,7 +230,7 @@ function placeCameraForEarthExtent(target, offset, direction, up, side, fraction
 //   - "Camera ECI" (predefinita): ferma nello spazio inerziale; la
 //     posa ECI è riapplicata a ogni frame, quindi la Terra ruota sullo
 //     schermo;
-//   - "Camera in ECEF": solidale con la Terra (la Terra appare
+//   - "Camera ECEF": solidale con la Terra (la Terra appare
 //     immobile). La posa di Cesium è già in coordinate ECEF, quindi
 //     basta non toccarla.
 // Il cambio non sposta la telecamera: la vista resta identica e da quel
@@ -1085,20 +1086,22 @@ panelStyle.textContent = `
     justify-self: center;
     margin: 0;
 }
-/* Scelta della telecamera (radio button) sotto le caselle. */
-#simPanel .sim-camera-mode {
+/* Riga di radio button (modello di Terra, telecamera). */
+#simPanel .sim-radio-row {
     display: flex;
     gap: 16px;
-    margin-top: 10px;
 }
-#simPanel .sim-camera-mode label {
+#simPanel .sim-radio-row label {
     display: flex;
     align-items: center;
     gap: 6px;
     cursor: pointer;
 }
-#simPanel .sim-camera-mode input {
+#simPanel .sim-radio-row input {
     margin: 0;
+}
+#simPanel .sim-camera-mode {
+    margin-top: 10px;
 }
 #simPanel button {
     padding: 6px 10px;
@@ -1378,15 +1381,27 @@ syncVelocityInputs();
 
 const modelSection = createSection("Modello");
 
-const sphericalEarthLabel = document.createElement("label");
-const sphericalEarthCheckbox = document.createElement("input");
-sphericalEarthCheckbox.type = "checkbox";
-sphericalEarthCheckbox.checked = settings.useSphericalEarth;
-sphericalEarthCheckbox.style.marginRight = "6px";
+// Modello di Terra per gravità e urti: sfera (predefinito) o
+// ellissoide WGS84 con gravità J2.
+const earthModelRow = document.createElement("div");
+earthModelRow.className = "sim-radio-row";
+modelSection.appendChild(earthModelRow);
 
-sphericalEarthLabel.appendChild(sphericalEarthCheckbox);
-sphericalEarthLabel.appendChild(document.createTextNode("Usa Terra sferica"));
-modelSection.appendChild(sphericalEarthLabel);
+function earthModelRadio(spherical, labelText) {
+    const label = document.createElement("label");
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "simEarthModel";
+    radio.checked = settings.useSphericalEarth === spherical;
+    label.appendChild(radio);
+    label.appendChild(document.createTextNode(labelText));
+    earthModelRow.appendChild(label);
+    return radio;
+}
+
+const sphereModelRadio = earthModelRadio(true, "Sfera");
+const ellipsoidModelRadio = earthModelRadio(false, "Ellissoide");
+const earthModelRadios = [sphereModelRadio, ellipsoidModelRadio];
 
 // --- Visualizzazione ---------------------------------------------------
 //
@@ -1457,7 +1472,7 @@ visibilityText("Relativi (ECEF)", "sim-colhead");
 // la sfera. Si può cambiare anche durante la simulazione.
 
 const cameraModeRow = document.createElement("div");
-cameraModeRow.className = "sim-camera-mode";
+cameraModeRow.className = "sim-radio-row sim-camera-mode";
 visibilitySection.appendChild(cameraModeRow);
 
 function cameraModeRadio(mode, labelText) {
@@ -1478,7 +1493,7 @@ function cameraModeRadio(mode, labelText) {
 }
 
 cameraModeRadio("eci", "Camera ECI");
-cameraModeRadio("ecef", "Camera in ECEF");
+cameraModeRadio("ecef", "Camera ECEF");
 
 const panNote = document.createElement("div");
 panNote.className = "sim-note";
@@ -1743,19 +1758,26 @@ attachVelocityHandlers(relativeVelocityControls, "relative");
 attachVelocityHandlers(absoluteVelocityControls, "absolute");
 
 // --------------------------------------------------
-// FLAG "USA TERRA SFERICA"
+// MODELLO DI TERRA: SFERA O ELLISSOIDE
 // --------------------------------------------------
 //
 // Cambia il modello usato da gravità e urti e fa ripartire la
 // simulazione da t = 0 (la posizione iniziale dipende dal modello).
 
-sphericalEarthCheckbox.addEventListener("change", function () {
-    if (viewer.clock.shouldAnimate) {
-        sphericalEarthCheckbox.checked = settings.useSphericalEarth;
-        return; // Disattivato durante la simulazione.
-    }
-    settings.useSphericalEarth = sphericalEarthCheckbox.checked;
-    restartSimulation();
+function syncEarthModelRadios() {
+    sphereModelRadio.checked = settings.useSphericalEarth;
+    ellipsoidModelRadio.checked = !settings.useSphericalEarth;
+}
+
+earthModelRadios.forEach(function (radio) {
+    radio.addEventListener("change", function () {
+        if (viewer.clock.shouldAnimate) {
+            syncEarthModelRadios();
+            return; // Disattivato durante la simulazione.
+        }
+        settings.useSphericalEarth = sphereModelRadio.checked;
+        restartSimulation();
+    });
 });
 
 
@@ -1783,7 +1805,9 @@ function updateControlsState() {
         c.azimuth.disabled = running;
         c.elevation.disabled = running;
     });
-    sphericalEarthCheckbox.disabled = running;
+    earthModelRadios.forEach(function (radio) {
+        radio.disabled = running;
+    });
 
     if (running && pickMode) {
         setPickMode(false);
@@ -1819,6 +1843,10 @@ resetButton.addEventListener("click", function () {
 // INFORMAZIONI SULLA SIMULAZIONE
 // --------------------------------------------------
 
+const STATUS_LABEL_WIDTH = 16; // Colonna dei valori (testo monospaziato)
+const scratchStatusEcef = new Cesium.Cartesian3();
+const scratchStatusCartographic = new Cesium.Cartographic();
+
 viewer.scene.postRender.addEventListener(function () {
 
     // Velocità relativa alla Terra: v_ECEF = v_ECI - ω × r
@@ -1830,27 +1858,26 @@ viewer.scene.postRender.addEventListener(function () {
     const speedEcefKmh = Math.sqrt(relX * relX + relY * relY + v.z * v.z) * 3.6;
     const speedEciKmh = Cesium.Cartesian3.magnitude(v) * 3.6;
 
-    status.textContent =
-        "Punto:      " +
-        settings.startLatitudeDeg.toFixed(2) +
-        "°, " +
-        settings.startLongitudeDeg.toFixed(2) +
-        "°\n" +
-        "Tempo:      " +
-        simulationTime.toFixed(1) +
-        " s\n" +
-        "Angolo:     " +
-        Cesium.Math.toDegrees(earthAngle).toFixed(3) +
-        "°\n" +
-        "Quota:      " +
-        (physics.altitude / 1000).toFixed(1) +
-        " km\n" +
-        "v ECEF:     " +
-        speedEcefKmh.toFixed(0) +
-        " km/h\n" +
-        "v ECI:      " +
-        speedEciKmh.toFixed(0) +
-        " km/h";
+    // Posizione geografica attuale della sfera: latitudine geodetica e
+    // longitudine in [0°, 360°) del suo centro, nel sistema terrestre.
+    const sphereEcef = eciToEcef(p, earthAngle, scratchStatusEcef);
+    const cartographic = Cesium.Cartographic.fromCartesian(
+        sphereEcef, Cesium.Ellipsoid.WGS84, scratchStatusCartographic
+    );
+    const position = Cesium.defined(cartographic)
+        ? Cesium.Math.toDegrees(cartographic.latitude).toFixed(2) + "°, " +
+          normalizeLongitude(Cesium.Math.toDegrees(cartographic.longitude)).toFixed(2) + "°"
+        : "-";
+
+    status.textContent = [
+        ["Posizione", position],
+        ["Tempo", simulationTime.toFixed(1) + " s"],
+        ["Quota", (physics.altitude / 1000).toFixed(1) + " km"],
+        ["Velocità ECEF", speedEcefKmh.toFixed(0) + " km/h"],
+        ["Velocità ECI", speedEciKmh.toFixed(0) + " km/h"]
+    ].map(function (row) {
+        return (row[0] + ":").padEnd(STATUS_LABEL_WIDTH) + row[1];
+    }).join("\n");
 });
 
 // --------------------------------------------------
