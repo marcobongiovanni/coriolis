@@ -1,7 +1,7 @@
 {
     // Debug della simulazione nel browser: avvia "npm run dev" e apre la
-    // pagina locale. I breakpoint si mettono direttamente in
-    // src/physics.js e src/app.js (grazie a dist/sandcastle.js.map).
+    // pagina locale. I breakpoint si mettono direttamente
+    // nei file di src/ (grazie a dist/sandcastle.js.map).
     "version": "0.2.0",
     "configurations": [
         {

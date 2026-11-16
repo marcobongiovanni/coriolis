@@ -1,15 +1,21 @@
 // ============================================================
-// build.mjs — Unisce src/physics.js e src/app.js in un unico script
-// per Sandcastle: dist/sandcastle.js.
+// build.mjs — Unisce i file di src/ in un unico script per
+// Sandcastle: dist/sandcastle.js.
 //
 // Non usa un bundler: rimuove le istruzioni "import ..." e la parola
-// "export" e concatena i file nell'ordine indicato. Così il risultato
-// è identico al codice sorgente, commenti compresi, e in Sandcastle
-// "Cesium" resta la variabile globale fornita dalla pagina.
+// "export" e concatena i file. Così il risultato è identico al codice
+// sorgente, commenti compresi, e in Sandcastle "Cesium" resta la
+// variabile globale fornita dalla pagina.
+//
+// L'ordine dei file si ricava dagli import relativi, a partire da
+// src/main.js: ogni file viene dopo quelli che importa. Dopo la
+// concatenazione tutti i file condividono lo stesso ambito, quindi i
+// nomi dichiarati al primo livello devono essere diversi in ogni file
+// (la build lo verifica).
 //
 // Genera anche dist/sandcastle.js.map (mappa sorgente riga per riga):
 // nel browser e nel debugger di VS Code i breakpoint e gli errori
-// puntano direttamente a src/physics.js e src/app.js.
+// puntano direttamente ai file di src/.
 //
 // Uso:
 //   node scripts/build.mjs           genera dist/sandcastle.js
@@ -23,10 +29,50 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SOURCES = ["src/physics.js", "src/app.js"]; // ordine di concatenazione
+const ENTRY = "src/main.js";
 const OUTPUT = path.join(ROOT, "dist", "sandcastle.js");
 const MAP_NAME = "sandcastle.js.map";
 const MAP_COMMENT = `//# sourceMappingURL=${MAP_NAME}`;
+
+// --------------------------------------------------
+// Ordine dei file: dipendenze prima di chi le usa
+// --------------------------------------------------
+//
+// Restituisce i percorsi relativi a ROOT (con "/"), dall'ingresso
+// seguendo gli import relativi ("./" o "../"); gli altri (es. "cesium")
+// sono forniti dalla pagina.
+
+function orderedSources(entry) {
+    const ordered = [];
+    const visiting = new Set();
+
+    function visit(file) {
+        if (ordered.includes(file)) {
+            return;
+        }
+        if (visiting.has(file)) {
+            throw new Error(`Import circolare che coinvolge ${file}.`);
+        }
+        visiting.add(file);
+        const code = fs.readFileSync(path.join(ROOT, file), "utf8");
+        for (const match of code.matchAll(/^import\s[^;]*?from\s+["'](\.{1,2}\/[^"']+)["']/gm)) {
+            visit(path.posix.join(path.posix.dirname(file), match[1]));
+        }
+        visiting.delete(file);
+        ordered.push(file);
+    }
+
+    visit(entry);
+    return ordered;
+}
+
+// Nomi dichiarati al primo livello (colonna 0) dalle righe di un file.
+function topLevelNames(lines) {
+    return lines
+        .map((line) => /^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/.exec(line.text))
+        .filter(Boolean)
+        .map((match) => match[1]);
+}
 
 // --------------------------------------------------
 // Rimozione della sintassi dei moduli, riga per riga
@@ -89,7 +135,7 @@ function vlq(value) {
 }
 
 // outputLines: [{ text, source?: indice in SOURCES, sourceLine? }]
-function createSourceMap(outputLines, sourcesContent) {
+function createSourceMap(outputLines, sources, sourcesContent) {
     let previousSource = 0;
     let previousLine = 0;
     const mappings = outputLines.map(function (line) {
@@ -111,7 +157,7 @@ function createSourceMap(outputLines, sourcesContent) {
     return JSON.stringify({
         version: 3,
         file: "sandcastle.js",
-        sources: SOURCES.map((file) => "../" + file),
+        sources: sources.map((file) => "../" + file),
         sourcesContent: sourcesContent,
         names: [],
         mappings: mappings
@@ -126,23 +172,36 @@ export function build() {
     const header = [
         "// ============================================================",
         "// FILE GENERATO da scripts/build.mjs — non modificarlo qui.",
-        "// Modifica src/physics.js e src/app.js, poi esegui",
+        "// Modifica i file di src/, poi esegui",
         "// \"npm run sandcastle\" e incolla questo file in Sandcastle.",
         "// ============================================================",
         ""
     ];
 
+    const sources = orderedSources(ENTRY);
     const outputLines = header.map((text) => ({ text }));
     const sourcesContent = [];
+    const declaredIn = new Map(); // nome di primo livello -> file
 
-    SOURCES.forEach(function (file, sourceIndex) {
+    sources.forEach(function (file, sourceIndex) {
         const code = fs.readFileSync(path.join(ROOT, file), "utf8");
         sourcesContent.push(code);
+        const lines = stripModuleSyntax(code, file);
+
+        topLevelNames(lines).forEach(function (name) {
+            if (declaredIn.has(name)) {
+                throw new Error(
+                    `"${name}" è dichiarato sia in ${declaredIn.get(name)} sia in ${file}: ` +
+                    `dopo la build i file condividono lo stesso ambito, usa nomi diversi.`
+                );
+            }
+            declaredIn.set(name, file);
+        });
 
         outputLines.push({
             text: `// ---------------------------------------------------- ${file}`
         });
-        stripModuleSyntax(code, file).forEach(function (line) {
+        lines.forEach(function (line) {
             outputLines.push({
                 text: line.text,
                 source: sourceIndex,
@@ -158,7 +217,7 @@ export function build() {
     fs.writeFileSync(OUTPUT, code + MAP_COMMENT + "\n", "utf8");
     fs.writeFileSync(
         path.join(path.dirname(OUTPUT), MAP_NAME),
-        createSourceMap(outputLines, sourcesContent),
+        createSourceMap(outputLines, sources, sourcesContent),
         "utf8"
     );
     return OUTPUT;
@@ -209,7 +268,7 @@ function main() {
 
     if (args.includes("--watch")) {
         let timer;
-        fs.watch(path.join(ROOT, "src"), function () {
+        fs.watch(path.join(ROOT, "src"), { recursive: true }, function () {
             clearTimeout(timer);
             timer = setTimeout(function () {
                 try {

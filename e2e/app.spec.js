@@ -130,30 +130,30 @@ async function expectEarthExtentFraction(page, side, fraction) {
     }
 }
 
-// Verifica l'inquadratura iniziale: la telecamera guarda la sfera da
+// Verifica l'inquadratura iniziale: la telecamera guarda la particella da
 // azimuth 150° (sud-sud-est) ed elevazione 45° nella terna locale del punto
 // di partenza, con Up complanare a normale e direzione di vista (e
 // rivolto verso l'alto), alla distanza in cui la Terra occupa il 95% della larghezza.
 async function expectEarthFramedOnStartPoint(page) {
     const framing = await page.evaluate(() => {
-        const { viewer, settings, physics } = window.__coriolis;
+        const { viewer, particle } = window.__coriolis;
         const camera = viewer.camera;
         const C3 = Cesium.Cartesian3;
 
-        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(settings.startSurfacePointECEF);
+        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(particle.start.surfacePointECEF);
         const toEnu = Cesium.Matrix4.inverseTransformation(enu, new Cesium.Matrix4());
         const normal = C3.fromCartesian4(Cesium.Matrix4.getColumn(enu, 2, new Cesium.Cartesian4()));
 
-        // Direzione sfera -> telecamera, nella terna Est-Nord-Su.
-        const offset = C3.subtract(camera.positionWC, physics.position, new C3());
+        // Direzione particella -> telecamera, nella terna Est-Nord-Su.
+        const offset = C3.subtract(camera.positionWC, particle.state.position, new C3());
         const local = Cesium.Matrix4.multiplyByPointAsVector(toEnu, offset, new C3());
         C3.normalize(local, local);
 
-        const toSphere = C3.normalize(C3.negate(offset, new C3()), new C3());
+        const toParticle = C3.normalize(C3.negate(offset, new C3()), new C3());
         return {
             azimuth: Cesium.Math.toDegrees(Math.atan2(local.x, local.y)),
             elevation: Cesium.Math.toDegrees(Math.asin(local.z)),
-            lookAtSphere: C3.dot(toSphere, camera.directionWC),
+            lookAtParticle: C3.dot(toParticle, camera.directionWC),
             // Prodotto misto: 0 se Up, normale e direzione sono complanari.
             coplanarity: C3.dot(camera.upWC, C3.cross(normal, camera.directionWC, new C3())),
             upAlongNormal: C3.dot(camera.upWC, normal)
@@ -161,14 +161,14 @@ async function expectEarthFramedOnStartPoint(page) {
     });
     expect(framing.azimuth).toBeCloseTo(150, 3);
     expect(framing.elevation).toBeCloseTo(45, 3);
-    expect(framing.lookAtSphere).toBeCloseTo(1, 6);
+    expect(framing.lookAtParticle).toBeCloseTo(1, 6);
     expect(Math.abs(framing.coplanarity)).toBeLessThan(1e-6);
     expect(framing.upAlongNormal).toBeGreaterThan(0);
     await expectEarthExtentFraction(page, "width", 0.95);
     return framing;
 }
 
-test("all'avvio la sfera è a quota 0 e la Terra occupa il 95% della larghezza", async ({ page }) => {
+test("all'avvio la particella è a quota 0 e la Terra occupa il 95% della larghezza", async ({ page }) => {
     const errors = await openApp(page);
     expect(await statusValue(page, "Quota")).toBe(0);
     await expect(page.getByLabel("Quota di partenza [km]")).toHaveValue("0");
@@ -182,11 +182,11 @@ test.describe("con la posizione geografica consentita", () => {
         permissions: ["geolocation"]
     });
 
-    test("la sfera parte dalla posizione del PC", async ({ page }) => {
+    test("la particella parte dalla posizione del PC", async ({ page }) => {
         const errors = await openApp(page);
         await expect.poll(() => page.evaluate(() => {
-            const s = window.__coriolis.settings;
-            return [s.startLatitudeDeg, s.startLongitudeDeg];
+            const s = window.__coriolis.particle.start;
+            return [s.latitudeDeg, s.longitudeDeg];
         })).toEqual([41.9, 12.5]);
         await expect(page.getByLabel("Latitudine [°]")).toHaveValue("41.9");
         await expect(page.getByLabel("Longitudine [°]")).toHaveValue("12.5");
@@ -233,9 +233,9 @@ test("stop dopo una simulazione riporta a t = 0 senza eccezioni", async ({ page 
     await expectNoErrors(page, errors);
 });
 
-test("la sfera cade e accelera", async ({ page }) => {
+test("la particella cade e accelera", async ({ page }) => {
     const errors = await openApp(page);
-    // All'avvio la sfera è a quota 0: la si solleva prima.
+    // All'avvio la particella è a quota 0: la si solleva prima.
     const altitude = page.getByLabel("Quota di partenza [km]");
     await altitude.fill("225");
     await altitude.press("Enter");
@@ -277,8 +277,8 @@ test("la longitudine è ciclica tra 0° e 359°", async ({ page }) => {
     await longitude.press("ArrowUp");
     await expect(longitude).toHaveValue("1");
 
-    const settings = await page.evaluate(() => window.__coriolis.settings.startLongitudeDeg);
-    expect(settings).toBe(1);
+    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.start.longitudeDeg);
+    expect(longitudeDeg).toBe(1);
 });
 
 test("la latitudine è limitata a ±90°", async ({ page }) => {
@@ -299,10 +299,10 @@ test("velocità relativa e assoluta restano coerenti", async ({ page }) => {
 
     // Velocità relativa calcolata dallo stato fisico (v - ω × r).
     const relativeKmh = await page.evaluate(() => {
-        const { physics } = window.__coriolis;
+        const { particle } = window.__coriolis;
         const OMEGA = 7.292115e-5;
-        const p = physics.position;
-        const v = physics.velocity;
+        const p = particle.state.position;
+        const v = particle.state.velocity;
         return Math.hypot(v.x + OMEGA * p.y, v.y - OMEGA * p.x, v.z) * 3.6;
     });
     expect(relativeKmh).toBeCloseTo(1000, 6);
@@ -313,7 +313,7 @@ test("velocità relativa e assoluta restano coerenti", async ({ page }) => {
         await page.getByLabel("Modulo [km/h] assoluta (ECI)").inputValue()
     );
     const absoluteKmh = await page.evaluate(() => {
-        const v = window.__coriolis.physics.velocity;
+        const v = window.__coriolis.particle.state.velocity;
         return Math.hypot(v.x, v.y, v.z) * 3.6;
     });
     expect(absoluteField).toBeCloseTo(absoluteKmh, 2);
@@ -599,7 +599,7 @@ test("pan verticale in ECI: la Terra supera il centro della vista", async ({ pag
     await expectNoErrors(page, errors);
 });
 
-test("stato: la Posizione della sfera si aggiorna durante la simulazione", async ({ page }) => {
+test("stato: la Posizione della particella si aggiorna durante la simulazione", async ({ page }) => {
     const errors = await openApp(page);
     const statusLines = async () =>
         (await page.locator(".sim-status").textContent()).split("\n");
@@ -614,13 +614,13 @@ test("stato: la Posizione della sfera si aggiorna durante la simulazione", async
         return { lat, lon };
     }
 
-    // A t = 0 la sfera è sul punto di partenza.
+    // A t = 0 la particella è sul punto di partenza.
     const start = await position();
-    const settings = await page.evaluate(() => window.__coriolis.settings);
-    expect(start.lat).toBeCloseTo(settings.startLatitudeDeg, 1);
-    expect(start.lon).toBeCloseTo(settings.startLongitudeDeg, 1);
+    const startPoint = await page.evaluate(() => window.__coriolis.particle.start);
+    expect(start.lat).toBeCloseTo(startPoint.latitudeDeg, 1);
+    expect(start.lon).toBeCloseTo(startPoint.longitudeDeg, 1);
 
-    // Lanciata verso Est, la sfera cambia posizione.
+    // Lanciata verso Est, la particella cambia posizione.
     const altitude = page.getByLabel("Quota di partenza [km]");
     await altitude.fill("1000");
     await altitude.press("Enter");
@@ -638,7 +638,7 @@ test("modello di Terra: Sfera (predefinito) o Ellissoide", async ({ page }) => {
     const errors = await openApp(page);
     const sphere = page.getByLabel("Sfera", { exact: true });
     const ellipsoid = page.getByLabel("Ellissoide");
-    const useSpherical = () => page.evaluate(() => window.__coriolis.settings.useSphericalEarth);
+    const useSpherical = () => page.evaluate(() => window.__coriolis.simulation.useSphericalEarth);
 
     await expect(sphere).toBeChecked();
     await expect(ellipsoid).not.toBeChecked();
