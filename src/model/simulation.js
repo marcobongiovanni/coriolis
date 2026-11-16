@@ -49,6 +49,7 @@ export class Simulation {
         this.reset();
     }
 
+    // Modello di Terra attivo (vedi earth.js).
     get earth() {
         return this.useSphericalEarth ? SPHERICAL_EARTH : ELLIPSOIDAL_EARTH;
     }
@@ -113,11 +114,14 @@ export class Simulation {
         }
     }
 
+    // Salva posizione e velocità della particella, per ripetere un passo
+    // con durata diversa (ricerca dell'istante di contatto).
     #saveState(particle) {
         Cesium.Cartesian3.clone(particle.state.position, this.#scratch.savedPosition);
         Cesium.Cartesian3.clone(particle.state.velocity, this.#scratch.savedVelocity);
     }
 
+    // Ripristina lo stato salvato da #saveState().
     #restoreState(particle) {
         Cesium.Cartesian3.clone(this.#scratch.savedPosition, particle.state.position);
         Cesium.Cartesian3.clone(this.#scratch.savedVelocity, particle.state.velocity);

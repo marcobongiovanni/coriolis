@@ -33,7 +33,7 @@
 // ============================================================
 
 import * as Cesium from "cesium";
-import { OMEGA } from "../geometry/referenceFrames.js";
+import { EARTH_ROTATION_AXIS, OMEGA } from "../geometry/referenceFrames.js";
 
 export const GM = 3.986004418e14;              // G·M terrestre [m³/s²]
 export const EARTH_RADIUS = 6371008.8;          // Raggio medio (IUGG) [m]
@@ -42,9 +42,11 @@ export const EQUATORIAL_RADIUS = WGS84.radii.x; // [m]
 export const J2 = 1.08262668e-3;                // Coefficiente zonale J2 (WGS84)
 
 // Comune ai due modelli: la Terra ruota attorno all'asse Z (verso il
-// Polo Nord) con velocità angolare OMEGA [rad/s].
+// Polo Nord) con velocità angolare OMEGA [rad/s]. Sono gli stessi
+// valori su cui sono definiti i sistemi ECI ed ECEF in
+// referenceFrames.js, così scena e conversioni non possono divergere.
 export const ROTATION_AXIS = Object.freeze({
-    direction: Cesium.Cartesian3.UNIT_Z,
+    direction: EARTH_ROTATION_AXIS,
     angularVelocity: OMEGA
 });
 
@@ -54,15 +56,18 @@ const scratchSurfaceOffset = new Cesium.Cartesian3();
 export const SPHERICAL_EARTH = {
     rotationAxis: ROTATION_AXIS,
 
+    // Massa puntiforme: a = -GM·r/|r|³.
     gravity(position, result) {
         const r2 = Cesium.Cartesian3.magnitudeSquared(position);
         return Cesium.Cartesian3.multiplyByScalar(position, -GM / (r2 * Math.sqrt(r2)), result);
     },
 
+    // Potenziale della massa puntiforme: -GM/|r|.
     potential(position) {
         return -GM / Cesium.Cartesian3.magnitude(position);
     },
 
+    // Distanza dalla sfera di raggio EARTH_RADIUS; normale radiale.
     heightAboveSurface(position, normalResult) {
         const r = Cesium.Cartesian3.magnitude(position);
         if (r === 0) {
@@ -72,6 +77,7 @@ export const SPHERICAL_EARTH = {
         return r - EARTH_RADIUS;
     },
 
+    // Punto sulla verticale radiale di "surfacePoint".
     pointAboveSurface(surfacePoint, height, result) {
         const up = Cesium.Cartesian3.normalize(surfacePoint, result);
         return Cesium.Cartesian3.multiplyByScalar(up, EARTH_RADIUS + height, result);
@@ -96,6 +102,7 @@ export const ELLIPSOIDAL_EARTH = {
         return result;
     },
 
+    // Potenziale con il termine J2: -GM/r · [1 - J2·(Re/r)²·(3·sin²φ - 1)/2].
     potential(position) {
         const r = Cesium.Cartesian3.magnitude(position);
         const s = position.z / r;
@@ -103,6 +110,7 @@ export const ELLIPSOIDAL_EARTH = {
             (1 - J2 * (EQUATORIAL_RADIUS / r) ** 2 * (3 * s * s - 1) / 2);
     },
 
+    // Distanza dall'ellissoide WGS84 lungo la normale geodetica.
     heightAboveSurface(position, normalResult) {
         const surface = WGS84.scaleToGeodeticSurface(position, scratchSurfacePoint);
         if (!Cesium.defined(surface)) {
@@ -113,6 +121,7 @@ export const ELLIPSOIDAL_EARTH = {
         return Cesium.Cartesian3.dot(offset, normalResult);
     },
 
+    // Punto lungo la normale geodetica di "surfacePoint".
     pointAboveSurface(surfacePoint, height, result) {
         const surface = WGS84.scaleToGeodeticSurface(surfacePoint, scratchSurfacePoint);
         const normal = WGS84.geodeticSurfaceNormal(surface, result);

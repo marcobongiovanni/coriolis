@@ -18,6 +18,19 @@
 const OMEGA = 7.292115e-5; // Velocità angolare terrestre [rad/s]
 const KMH_PER_MS = 3.6;    // Conversione m/s -> km/h
 
+// Asse di rotazione terrestre. Per definizione dei due sistemi coincide
+// con il loro asse Z comune: tutte le conversioni di questo file
+// ruotano attorno a Z.
+const EARTH_ROTATION_AXIS = Cesium.Cartesian3.UNIT_Z;
+
+// Sistemi di riferimento, nell'ordine in cui compaiono nell'interfaccia.
+const REFERENCE_SYSTEMS = ["eci", "ecef"];
+
+// Oggetto { eci, ecef } con il valore create(system) per ogni sistema.
+function bySystem(create) {
+    return Object.fromEntries(REFERENCE_SYSTEMS.map((system) => [system, create(system)]));
+}
+
 // Angolo di cui la Terra ha ruotato dopo "seconds" secondi simulati.
 function earthRotationAngle(seconds) {
     return OMEGA * seconds;
@@ -48,14 +61,23 @@ function ecefToEci(vector, angle, result) {
     return rotateAboutZ(vector, angle, result);
 }
 
-// Velocità relativa alla Terra, in coordinate ECI: v - ω × r,
-// con ω = (0, 0, OMEGA).
-function relativeVelocity(position, velocity, result) {
+// Velocità di trascinamento ω × r di un punto solidale con la Terra
+// in "position", con ω = (0, 0, OMEGA).
+function dragVelocity(position, result) {
     result = result || new Cesium.Cartesian3();
-    result.x = velocity.x + OMEGA * position.y;
-    result.y = velocity.y - OMEGA * position.x;
-    result.z = velocity.z;
+    result.x = -OMEGA * position.y;
+    result.y = OMEGA * position.x;
+    result.z = 0;
     return result;
+}
+
+const scratchDrag = new Cesium.Cartesian3();
+
+// Velocità relativa alla Terra: v - ω × r. "result" può coincidere
+// con "velocity".
+function relativeVelocity(position, velocity, result) {
+    const drag = dragVelocity(position, scratchDrag);
+    return Cesium.Cartesian3.subtract(velocity, drag, result || new Cesium.Cartesian3());
 }
 
 // Angolo in gradi ricondotto all'intervallo [0°, 360°). Gli angoli già
@@ -134,9 +156,11 @@ const EQUATORIAL_RADIUS = WGS84.radii.x; // [m]
 const J2 = 1.08262668e-3;                // Coefficiente zonale J2 (WGS84)
 
 // Comune ai due modelli: la Terra ruota attorno all'asse Z (verso il
-// Polo Nord) con velocità angolare OMEGA [rad/s].
+// Polo Nord) con velocità angolare OMEGA [rad/s]. Sono gli stessi
+// valori su cui sono definiti i sistemi ECI ed ECEF in
+// referenceFrames.js, così scena e conversioni non possono divergere.
 const ROTATION_AXIS = Object.freeze({
-    direction: Cesium.Cartesian3.UNIT_Z,
+    direction: EARTH_ROTATION_AXIS,
     angularVelocity: OMEGA
 });
 
@@ -146,15 +170,18 @@ const scratchSurfaceOffset = new Cesium.Cartesian3();
 const SPHERICAL_EARTH = {
     rotationAxis: ROTATION_AXIS,
 
+    // Massa puntiforme: a = -GM·r/|r|³.
     gravity(position, result) {
         const r2 = Cesium.Cartesian3.magnitudeSquared(position);
         return Cesium.Cartesian3.multiplyByScalar(position, -GM / (r2 * Math.sqrt(r2)), result);
     },
 
+    // Potenziale della massa puntiforme: -GM/|r|.
     potential(position) {
         return -GM / Cesium.Cartesian3.magnitude(position);
     },
 
+    // Distanza dalla sfera di raggio EARTH_RADIUS; normale radiale.
     heightAboveSurface(position, normalResult) {
         const r = Cesium.Cartesian3.magnitude(position);
         if (r === 0) {
@@ -164,6 +191,7 @@ const SPHERICAL_EARTH = {
         return r - EARTH_RADIUS;
     },
 
+    // Punto sulla verticale radiale di "surfacePoint".
     pointAboveSurface(surfacePoint, height, result) {
         const up = Cesium.Cartesian3.normalize(surfacePoint, result);
         return Cesium.Cartesian3.multiplyByScalar(up, EARTH_RADIUS + height, result);
@@ -188,6 +216,7 @@ const ELLIPSOIDAL_EARTH = {
         return result;
     },
 
+    // Potenziale con il termine J2: -GM/r · [1 - J2·(Re/r)²·(3·sin²φ - 1)/2].
     potential(position) {
         const r = Cesium.Cartesian3.magnitude(position);
         const s = position.z / r;
@@ -195,6 +224,7 @@ const ELLIPSOIDAL_EARTH = {
             (1 - J2 * (EQUATORIAL_RADIUS / r) ** 2 * (3 * s * s - 1) / 2);
     },
 
+    // Distanza dall'ellissoide WGS84 lungo la normale geodetica.
     heightAboveSurface(position, normalResult) {
         const surface = WGS84.scaleToGeodeticSurface(position, scratchSurfacePoint);
         if (!Cesium.defined(surface)) {
@@ -205,6 +235,7 @@ const ELLIPSOIDAL_EARTH = {
         return Cesium.Cartesian3.dot(offset, normalResult);
     },
 
+    // Punto lungo la normale geodetica di "surfacePoint".
     pointAboveSurface(surfacePoint, height, result) {
         const surface = WGS84.scaleToGeodeticSurface(surfacePoint, scratchSurfacePoint);
         const normal = WGS84.geodeticSurfaceNormal(surface, result);
@@ -264,8 +295,10 @@ class Arrow {
 //           dalla Terra, ruota all'indietro dell'angolo di rotazione
 //           terrestre.
 //
-// I metodi statici convertono una velocità tra componenti nella terna
-// e modulo/azimuth/elevazione.
+// toCartesian/toLocal convertono un vettore tra componenti nella terna
+// e coordinate cartesiane del sistema della terna; i metodi statici
+// convertono una velocità tra componenti nella terna e
+// modulo/azimuth/elevazione.
 // ============================================================
 
 
@@ -297,6 +330,22 @@ class EnuFrame {
             origin: eciToEcef(this.origin, angle),
             axes: this.axes.map((axis) => eciToEcef(axis, angle))
         };
+    }
+
+    // Componenti E, N, U di un vettore -> coordinate cartesiane.
+    toCartesian(local, result = new Cesium.Cartesian3()) {
+        return Cesium.Matrix3.multiplyByVector(this.#rotation, local, result);
+    }
+
+    // Coordinate cartesiane di un vettore -> componenti E, N, U.
+    toLocal(vector, result = new Cesium.Cartesian3()) {
+        const [east, north, up] = this.axes;
+        return Cesium.Cartesian3.fromElements(
+            Cesium.Cartesian3.dot(vector, east),
+            Cesium.Cartesian3.dot(vector, north),
+            Cesium.Cartesian3.dot(vector, up),
+            result
+        );
     }
 
     // --------------------------------------------------
@@ -368,6 +417,7 @@ class Trajectory {
         this.points.push(Cesium.Cartesian3.clone(position));
     }
 
+    // Svuota la traiettoria.
     clear() {
         this.points = [];
         this.revision++;
@@ -404,13 +454,12 @@ const DEFAULT_PARTICLE_RADIUS = 125000; // [m]
 // la posizione geografica del PC.
 const DEFAULT_START_POINT = { latitudeDeg: 45.0, longitudeDeg: 7.1 };
 
-// Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
-// partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
-//   "relative": rispetto alla Terra (ECEF);
-//   "absolute": rispetto allo spazio inerziale (ECI).
-// L'ultima terna modificata è quella "di riferimento" (velocityMaster):
-// l'altra viene ricalcolata da questa.
-const VELOCITY_FRAMES = ["relative", "absolute"];
+// Grandezze rappresentate dalle frecce della velocità, in coordinate
+// ECI: assoluta (eci), v, e relativa alla Terra (ecef), v - ω × r.
+const VELOCITY_QUANTITIES = {
+    eci: (state, result) => Cesium.Cartesian3.clone(state.velocity, result),
+    ecef: (state, result) => relativeVelocity(state.position, state.velocity, result)
+};
 
 class Particle {
     radius;
@@ -423,6 +472,12 @@ class Particle {
         altitude: 0 // Quota del punto più basso della particella [m]
     };
 
+    // Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
+    // partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
+    //   "relative": rispetto alla Terra (ECEF);
+    //   "absolute": rispetto allo spazio inerziale (ECI).
+    // L'ultima terna modificata è quella "di riferimento"
+    // (velocityMaster): l'altra viene ricalcolata da questa.
     velocityMaster = "relative";
 
     velocity = {
@@ -444,20 +499,15 @@ class Particle {
         altitude: 0 // Quota del punto più basso della particella [m]
     };
 
-    // Velocità corrente del centro: assoluta (eci), v, e relativa alla
-    // Terra (ecef), v - ω × r.
-    velocityArrows = {
-        eci: new Arrow("eci", this.state, (state, result) => Cesium.Cartesian3.clone(state.velocity, result)),
-        ecef: new Arrow("ecef", this.state, (state, result) => relativeVelocity(state.position, state.velocity, result))
-    };
+    // Velocità corrente del centro: assoluta (eci) e relativa (ecef).
+    velocityArrows = bySystem((system) => new Arrow(system, this.state, VELOCITY_QUANTITIES[system]));
 
     // Terne Est-Nord-Su con origine nel centro della particella a t = 0.
-    startFrames = { eci: new EnuFrame("eci"), ecef: new EnuFrame("ecef") };
+    startFrames = bySystem((system) => new EnuFrame(system));
 
     // Posizioni del centro dall'inizio della simulazione.
-    trajectories = { eci: new Trajectory("eci"), ecef: new Trajectory("ecef") };
+    trajectories = bySystem((system) => new Trajectory(system));
 
-    #enu = new Cesium.Matrix3();
     #scratchEcef = new Cesium.Cartesian3();
 
     constructor(radius = DEFAULT_PARTICLE_RADIUS) {
@@ -501,12 +551,12 @@ class Particle {
     // lo stato corrente e fa ripartire le traiettorie.
     reset(earth) {
         this.#computeInitialPosition(earth);
+        Object.values(this.startFrames).forEach((frame) => frame.placeAt(this.initial.position));
         this.#computeInitialVelocity();
         Cesium.Cartesian3.clone(this.initial.position, this.state.position);
         Cesium.Cartesian3.clone(this.initial.velocityECI, this.state.velocity);
         this.updateAltitude(earth);
 
-        Object.values(this.startFrames).forEach((frame) => frame.placeAt(this.initial.position));
         Object.values(this.trajectories).forEach((trajectory) => trajectory.clear());
         this.recordTrajectory(0);
     }
@@ -526,6 +576,7 @@ class Particle {
         return Cesium.defined(h) ? h - this.radius : undefined;
     }
 
+    // Aggiorna la quota dello stato corrente (0 se non definita).
     updateAltitude(earth) {
         const c = this.clearance(earth, new Cesium.Cartesian3());
         this.state.altitude = Cesium.defined(c) ? c : 0;
@@ -548,31 +599,25 @@ class Particle {
         );
     }
 
-    // A t = 0 le due terne sono legate da v_ECI = v_ECEF + ω × r, dove
-    // ω × r (velocità di trascinamento nel centro della particella)
-    // nella terna ENU è diretta verso Est, di modulo ω·ρ (ρ = distanza
-    // dall'asse di rotazione).
+    // A t = 0 le due terne di velocità sono legate da
+    // v_ECI = v_ECEF + ω × r, con ω × r velocità di trascinamento nel
+    // centro della particella. La terna di riferimento (velocityMaster)
+    // determina l'altra. Richiede le terne già posizionate (placeAt).
     #computeInitialVelocity() {
-        const origin = this.initial.position;
-        const enu = enuRotation(origin, this.#enu);
-        const relativeIsMaster = this.velocityMaster === "relative";
-        const master = relativeIsMaster ? this.velocity.relative : this.velocity.absolute;
-        const derived = relativeIsMaster ? this.velocity.absolute : this.velocity.relative;
+        const C3 = Cesium.Cartesian3;
+        const frame = this.startFrames.ecef; // A t = 0 ECEF = ECI
+        const initial = this.initial;
+        const drag = dragVelocity(initial.position);
 
-        const drag = new Cesium.Cartesian3(OMEGA * Math.hypot(origin.x, origin.y), 0, 0);
-        const localMaster = EnuFrame.fromSpherical(master);
-        const localDerived = relativeIsMaster
-            ? Cesium.Cartesian3.add(localMaster, drag, new Cesium.Cartesian3())
-            : Cesium.Cartesian3.subtract(localMaster, drag, new Cesium.Cartesian3());
-        EnuFrame.toSpherical(localDerived, derived);
-
-        // Da ENU a coordinate cartesiane (ECEF = ECI a t = 0).
-        Cesium.Matrix3.multiplyByVector(
-            enu, relativeIsMaster ? localMaster : localDerived, this.initial.velocityECEF
-        );
-        Cesium.Matrix3.multiplyByVector(
-            enu, relativeIsMaster ? localDerived : localMaster, this.initial.velocityECI
-        );
+        if (this.velocityMaster === "relative") {
+            frame.toCartesian(EnuFrame.fromSpherical(this.velocity.relative), initial.velocityECEF);
+            C3.add(initial.velocityECEF, drag, initial.velocityECI);
+            EnuFrame.toSpherical(frame.toLocal(initial.velocityECI), this.velocity.absolute);
+        } else {
+            frame.toCartesian(EnuFrame.fromSpherical(this.velocity.absolute), initial.velocityECI);
+            C3.subtract(initial.velocityECI, drag, initial.velocityECEF);
+            EnuFrame.toSpherical(frame.toLocal(initial.velocityECEF), this.velocity.relative);
+        }
     }
 }
 
@@ -625,6 +670,7 @@ class Simulation {
         this.reset();
     }
 
+    // Modello di Terra attivo (vedi earth.js).
     get earth() {
         return this.useSphericalEarth ? SPHERICAL_EARTH : ELLIPSOIDAL_EARTH;
     }
@@ -689,11 +735,14 @@ class Simulation {
         }
     }
 
+    // Salva posizione e velocità della particella, per ripetere un passo
+    // con durata diversa (ricerca dell'istante di contatto).
     #saveState(particle) {
         Cesium.Cartesian3.clone(particle.state.position, this.#scratch.savedPosition);
         Cesium.Cartesian3.clone(particle.state.velocity, this.#scratch.savedVelocity);
     }
 
+    // Ripristina lo stato salvato da #saveState().
     #restoreState(particle) {
         Cesium.Cartesian3.clone(this.#scratch.savedPosition, particle.state.position);
         Cesium.Cartesian3.clone(this.#scratch.savedVelocity, particle.state.velocity);
@@ -762,6 +811,7 @@ class Simulation {
 // browser, finti oggetti nei test) vengono scelte in main.js.
 // ============================================================
 
+// Errore lanciato dai metodi di un'interfaccia non implementati.
 function notImplemented(member) {
     throw new Error(`${member} non implementato`);
 }
@@ -781,6 +831,7 @@ class SimulationClock {
         return notImplemented("SimulationClock.running");
     }
 
+    // Avvia (true) o ferma (false) lo scorrere del tempo simulato.
     set running(value) {
         notImplemented("SimulationClock.running");
     }
@@ -826,11 +877,15 @@ const GEOLOCATION_OPTIONS = {
 class BrowserGeolocationService extends GeolocationService {
     #geolocation;
 
+    // "geolocation": navigator.geolocation (undefined se il browser non
+    // la fornisce).
     constructor(geolocation) {
         super();
         this.#geolocation = geolocation;
     }
 
+    // Promise della posizione, o di undefined se non disponibile (mai
+    // rifiutata: l'errore è solo annotato nella console).
     getCurrentPosition() {
         return new Promise((resolve) => {
             if (!this.#geolocation) {
@@ -866,6 +921,8 @@ class BrowserGeolocationService extends GeolocationService {
 class CesiumSimulationClock extends SimulationClock {
     #clock;
 
+    // Configura "cesiumClock": tempo illimitato che parte da adesso,
+    // fermo, "timeScale" volte più veloce del tempo reale quando scorre.
     constructor(cesiumClock, timeScale) {
         super();
         const start = Cesium.JulianDate.now();
@@ -878,18 +935,22 @@ class CesiumSimulationClock extends SimulationClock {
         this.#clock = cesiumClock;
     }
 
+    // Il tempo scorre quando Cesium anima la scena.
     get running() {
         return this.#clock.shouldAnimate;
     }
 
+    // Avvia o ferma lo scorrere del tempo.
     set running(value) {
         this.#clock.shouldAnimate = value;
     }
 
+    // Riporta l'orologio all'istante iniziale.
     reset() {
         this.#clock.currentTime = this.#clock.startTime.clone();
     }
 
+    // Vero se l'orologio è all'istante iniziale.
     isAtStart() {
         return Cesium.JulianDate.equals(this.#clock.currentTime, this.#clock.startTime);
     }
@@ -1107,14 +1168,14 @@ const VELOCITY_COLUMNS = [
 
 // Righe della sezione Visualizzazione: [etichetta, oggetto].
 const VISIBILITY_ROWS = [
-    ["Frame", "frame"],
+    ["Terne", "frame"],
     ["Traiettoria", "track"],
     ["Velocità", "velocity"]
 ];
 
 const LEGEND = [
-    [PALETTE.ecef, "Traccia e velocità relative (ECEF)"],
-    [PALETTE.eci, "Traccia e velocità assolute (ECI)"],
+    [PALETTE.ecef, "Traiettoria e velocità relative (ECEF)"],
+    [PALETTE.eci, "Traiettoria e velocità assolute (ECI)"],
     [PALETTE.rotationAxis, "Asse di rotazione terrestre"]
 ];
 
@@ -1122,12 +1183,15 @@ const LEGEND = [
 // STRUMENTI DOM
 // --------------------------------------------------
 
+// Crea un elemento DOM con le proprietà e i figli indicati.
 function element(tag, properties, children) {
     const node = Object.assign(document.createElement(tag), properties);
     node.append(...(children || []));
     return node;
 }
 
+// Icona SVG del pulsante, con descrizione per tooltip e lettori di
+// schermo.
 function setIcon(button, svg, label) {
     button.innerHTML = svg;
     button.title = label;
@@ -1163,6 +1227,8 @@ class PanelView {
     #errorTimer;
     #status;
 
+    // Inserisce il pannello a sinistra di "sceneContainer" (contenitore
+    // della vista Cesium) e lo collega a "viewModel".
     constructor(sceneContainer, viewModel) {
         this.#vm = viewModel;
         this.#mount(sceneContainer);
@@ -1183,6 +1249,8 @@ class PanelView {
         this.#showStatus(viewModel.frame.status);
     }
 
+    // Aggiunge lo stile e il pannello alla pagina e restringe la vista
+    // Cesium allo spazio a destra del pannello.
     #mount(sceneContainer) {
         document.head.appendChild(element("style", { textContent: PANEL_CSS }));
         this.#panel = element("div", { id: "simPanel" });
@@ -1198,16 +1266,20 @@ class PanelView {
         sceneContainer.parentNode.insertBefore(this.#panel, sceneContainer);
     }
 
+    // Registra la funzione che aggiorna un controllo dallo stato del
+    // ViewModel.
     #bind(refresher) {
         this.#refreshers.push(refresher);
     }
 
+    // Aggiorna tutti i controlli.
     #refresh() {
         this.#refreshers.forEach((refresher) => refresher());
     }
 
     // --- Costruttori di controlli ----------------------------------------
 
+    // Nuova sezione del pannello con il titolo indicato.
     #section(title, className) {
         const section = element("div", { className: className ? "sim-section " + className : "sim-section" }, [
             element("h3", { textContent: title })
@@ -1216,6 +1288,7 @@ class PanelView {
         return section;
     }
 
+    // Pulsante che chiama "onClick" al clic.
     #button(onClick, properties) {
         const button = element("button", properties);
         button.addEventListener("click", onClick);
@@ -1286,6 +1359,7 @@ class PanelView {
 
     // --- Sezioni ---------------------------------------------------------
 
+    // Pulsanti avvia/pausa e stop, con il riquadro degli errori.
     #buildSimulationSection() {
         const vm = this.#vm;
         const section = this.#section("Simulazione");
@@ -1303,6 +1377,7 @@ class PanelView {
         section.append(element("div", { className: "sim-buttons" }, [play, stop]), this.#errorBox);
     }
 
+    // Selezione del punto sul globo, latitudine, longitudine e quota.
     #buildStartSection() {
         const vm = this.#vm;
         const section = this.#section("Partenza");
@@ -1333,6 +1408,8 @@ class PanelView {
         }));
     }
 
+    // Griglia della velocità iniziale: righe VELOCITY_ROWS, colonne
+    // VELOCITY_COLUMNS.
     #buildVelocitySection() {
         const vm = this.#vm;
         const grid = element("div", { className: "sim-grid" }, [
@@ -1354,6 +1431,7 @@ class PanelView {
         this.#section("Velocità iniziale").append(grid);
     }
 
+    // Scelta del modello di Terra.
     #buildModelSection() {
         const vm = this.#vm;
         this.#radioGroup(this.#section("Modello"), {
@@ -1378,7 +1456,7 @@ class PanelView {
         ]);
         VISIBILITY_ROWS.forEach(([labelText, item]) => {
             grid.append(element("span", { textContent: labelText }));
-            ["eci", "ecef"].forEach((frame) => {
+            REFERENCE_SYSTEMS.forEach((frame) => {
                 const checkbox = element("input", {
                     type: "checkbox",
                     title: labelText + " " + frame.toUpperCase()
@@ -1395,7 +1473,7 @@ class PanelView {
         this.#radioGroup(section, {
             name: "simCameraMode",
             className: "sim-radio-row sim-camera-mode",
-            options: [["Camera ECI", "eci"], ["Camera ECEF", "ecef"]],
+            options: [["Telecamera ECI", "eci"], ["Telecamera ECEF", "ecef"]],
             read: () => vm.cameraMode,
             write: (mode) => vm.setCameraMode(mode)
         });
@@ -1405,11 +1483,13 @@ class PanelView {
         }));
     }
 
+    // Riquadro dello stato, aggiornato a ogni istante da #showStatus().
     #buildStatusSection() {
         this.#status = element("div", { className: "sim-status" });
         this.#section("Stato").append(this.#status);
     }
 
+    // Colori della scena e loro significato.
     #buildLegendSection() {
         const section = this.#section("Legenda", "sim-legend");
         LEGEND.forEach(([color, text]) => {
@@ -1421,6 +1501,7 @@ class PanelView {
 
     // --- Messaggi e stato ---------------------------------------------------
 
+    // Mostra "message" per ERROR_DURATION_MS; undefined lo nasconde.
     #showError(message) {
         clearTimeout(this.#errorTimer);
         this.#errorBox.style.display = message ? "block" : "none";
@@ -1430,6 +1511,7 @@ class PanelView {
         }
     }
 
+    // Righe "etichetta: valore" in colonna (testo monospaziato).
     #showStatus(status) {
         const position = status.latitudeDeg === undefined
             ? "-"
@@ -1501,10 +1583,12 @@ function earthWidthFraction(position, direction, up, tanHalfFovWidth) {
 // (bisezione: allontanandosi la Terra rimpicciolisce).
 function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
     const candidate = new Cesium.Cartesian3();
+    // Posizione della telecamera a "distance" da target.
     function cameraAt(distance, result) {
         Cesium.Cartesian3.multiplyByScalar(offset, distance, result);
         return Cesium.Cartesian3.add(target, result, result);
     }
+    // Vero se a "distance" la Terra occupa più della frazione voluta.
     function tooLarge(distance) {
         const fraction = earthWidthFraction(cameraAt(distance, candidate), direction, up, tanHalfFovWidth);
         return fraction > EARTH_WIDTH_FRACTION;
@@ -1647,6 +1731,7 @@ class CameraRig {
     // Profondità del punto afferrato con il pan [m]; undefined = nessun pan.
     #panDepth;
 
+    // Configura i comandi del mouse e il pan sulla telecamera di "viewer".
     constructor(viewer) {
         this.#viewer = viewer;
         this.#camera = viewer.camera;
@@ -1654,6 +1739,7 @@ class CameraRig {
         this.#installPan();
     }
 
+    // Sistema in cui la telecamera resta ferma: "eci" o "ecef".
     setMode(mode) {
         if (mode === "eci" && this.#mode !== "eci") {
             // La posa attuale diventa quella da mantenere ferma in ECI.
@@ -1701,6 +1787,7 @@ class CameraRig {
         return Math.tan(this.#camera.frustum.fov / 2) * width / Math.max(width, height);
     }
 
+    // Annota la posa attuale come impostata da qui.
     #rememberAppliedPose() {
         const camera = this.#camera;
         this.#appliedPose = {
@@ -1710,6 +1797,8 @@ class CameraRig {
         };
     }
 
+    // Vero se la posa è cambiata dall'ultima impostata da qui, cioè se
+    // l'ha mossa l'utente.
     #poseChanged() {
         const camera = this.#camera;
         const applied = this.#appliedPose;
@@ -1720,6 +1809,7 @@ class CameraRig {
             distance(camera.upWC, applied.up) > MOVED_AXIS_TOLERANCE;
     }
 
+    // La posa attuale (ECEF) diventa la posa da mantenere ferma in ECI.
     #captureInertialPose() {
         const camera = this.#camera;
         const pose = this.#inertialPose;
@@ -1730,6 +1820,8 @@ class CameraRig {
         this.#rememberAppliedPose();
     }
 
+    // Porta la telecamera nella posa ECI, convertita in ECEF con
+    // l'angolo terrestre del frame.
     #applyInertialPose() {
         const pose = this.#inertialPose;
         const angle = this.#earthAngle;
@@ -1759,6 +1851,7 @@ class CameraRig {
     // Con la telecamera ECI lo spostamento viene acquisito come movimento
     // dell'utente; con quella ECEF resta solidale con la Terra.
 
+    // Registra i gestori di inizio, movimento e fine del pan.
     #installPan() {
         const scene = this.#viewer.scene;
         const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
@@ -1789,6 +1882,9 @@ class CameraRig {
         handler.setInputAction(endPan, T.RIGHT_UP, SHIFT);
     }
 
+    // Profondità [m], lungo la direzione di vista, del punto della Terra
+    // sotto "windowPosition" (del centro della Terra se il cursore è
+    // nello spazio); almeno 1 m.
     #depthAt(windowPosition) {
         const camera = this.#camera;
         const picked = camera.pickEllipsoid(windowPosition, Cesium.Ellipsoid.WGS84);
@@ -1831,6 +1927,8 @@ class TrackLayer {
     #revision;     // Revisione della traiettoria disegnata
     #drawnCount = 0;
 
+    // Aggiunge a "primitives" le collezioni della traccia, di colore
+    // "color" (Cesium.Color).
     constructor(primitives, color) {
         this.#color = color;
         this.#frozenChunks = primitives.add(new Cesium.PrimitiveCollection());
@@ -1866,6 +1964,7 @@ class TrackLayer {
         }
     }
 
+    // Cancella tutto il disegno.
     #clear() {
         this.#active.removeAll();
         this.#frozenChunks.removeAll();
@@ -1874,6 +1973,8 @@ class TrackLayer {
         this.#drawnCount = 0;
     }
 
+    // Aggiunge un vertice al troncone attivo, congelandolo quando è
+    // pieno.
     #addPoint(position) {
         if (this.#points.length >= TRACK_CHUNK_SIZE) {
             const last = this.#points[this.#points.length - 1];
@@ -1903,6 +2004,8 @@ class TrackLayer {
         });
     }
 
+    // Disegna "points" come Primitive statica, con la modelMatrix
+    // corrente.
     #freeze(points) {
         this.#frozenChunks.add(new Cesium.Primitive({
             geometryInstances: new Cesium.GeometryInstance({
@@ -1957,8 +2060,13 @@ const AXIS_WIDTH = 1.5;           // [px]
 const FRAME_AXIS_PIXELS = 70; // [px]
 const FRAME_LINE_WIDTH = 3;   // [px]
 
-const REFERENCE_SYSTEMS = ["eci", "ecef"];
+// Nomi delle frecce della velocità (mostrati da Cesium alla selezione).
+const VELOCITY_ARROW_NAMES = {
+    eci: "Velocità assoluta (ECI)",
+    ecef: "Velocità relativa (ECEF)"
+};
 
+// Colore di Cesium dal nome CSS.
 function color(cssName) {
     return Cesium.Color.fromCssColorString(cssName);
 }
@@ -1982,14 +2090,8 @@ class SceneView {
         this.#camera = new CameraRig(viewer);
 
         this.#addParticle();
-        this.#arrows = {
-            eci: this.#addVelocityArrow("Velocità assoluta (ECI)", PALETTE.eci, "eci"),
-            ecef: this.#addVelocityArrow("Velocità relativa (ECEF)", PALETTE.ecef, "ecef")
-        };
-        this.#tracks = {
-            eci: new TrackLayer(viewer.scene.primitives, color(PALETTE.eci)),   // ferma in ECI
-            ecef: new TrackLayer(viewer.scene.primitives, color(PALETTE.ecef))  // solidale con la Terra
-        };
+        this.#arrows = bySystem((system) => this.#addVelocityArrow(system));
+        this.#tracks = bySystem((system) => new TrackLayer(viewer.scene.primitives, color(PALETTE[system])));
         this.#addRotationAxis();
         this.#startMarker = this.#addStartMarker();
         this.#framePolylines = this.#addReferenceFrames();
@@ -2019,11 +2121,13 @@ class SceneView {
     // AGGIORNAMENTO
     // --------------------------------------------------
 
+    // Stato del ViewModel all'istante "time" dell'orologio di Cesium.
     #frameAt(time) {
         const clock = this.#viewer.clock;
         return this.#vm.frameAt(Cesium.JulianDate.secondsDifference(time, clock.startTime));
     }
 
+    // Inquadratura iniziale sul punto di partenza.
     #frameStartPoint() {
         this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startParticlePosition);
     }
@@ -2075,8 +2179,9 @@ class SceneView {
         });
     }
 
-    // system: "eci" (velocità assoluta) o "ecef" (velocità relativa).
-    #addVelocityArrow(name, cssColor, system) {
+    // Freccia della velocità assoluta ("eci") o relativa ("ecef"),
+    // aggiornata da Cesium a ogni frame.
+    #addVelocityArrow(system) {
         const velocityAt = (time) => this.#frameAt(time).velocities[system];
         const positions = (time) => {
             const { origin: center, vector: velocity } = velocityAt(time);
@@ -2095,7 +2200,7 @@ class SceneView {
         };
 
         return this.#viewer.entities.add({
-            name: name,
+            name: VELOCITY_ARROW_NAMES[system],
             polyline: {
                 positions: new Cesium.CallbackProperty(positions, false),
                 show: new Cesium.CallbackProperty((time) => {
@@ -2104,7 +2209,7 @@ class SceneView {
                 width: VELOCITY_ARROW_WIDTH,
                 // NONE: segmento rettilineo nello spazio.
                 arcType: Cesium.ArcType.NONE,
-                material: new Cesium.PolylineArrowMaterialProperty(color(cssColor))
+                material: new Cesium.PolylineArrowMaterialProperty(color(PALETTE[system]))
             }
         });
     }
@@ -2117,6 +2222,7 @@ class SceneView {
     // - ECI (rossa): vertici in ECI, disegnati con la rotazione
     //   ECI -> ECEF del frame: la traccia resta ferma nello spazio.
 
+    // Aggiorna la rotazione della traccia ECI e aggiunge i punti nuovi.
     #updateTracks(frame) {
         Cesium.Matrix3.fromRotationZ(-frame.earthAngle, this.#scratchRotation3);
         Cesium.Matrix4.fromRotation(this.#scratchRotation3, this.#scratchRotation4);
@@ -2131,6 +2237,8 @@ class SceneView {
     // ASSE DI ROTAZIONE E MARCATORE DEL PUNTO DI PARTENZA
     // --------------------------------------------------
 
+    // Due tratti lungo l'asse fornito dal ViewModel, dalla superficie
+    // di ciascun polo fino a AXIS_HALF_LENGTH dal centro.
     #addRotationAxis() {
         const polarRadius = Cesium.Ellipsoid.WGS84.radii.z;
         const direction = this.#vm.rotationAxis;
@@ -2169,6 +2277,8 @@ class SceneView {
     // X (rosso) Est, Y (verde) Nord, Z (blu) Su: una terna solidale con
     // la Terra (ECEF) e una ferma nello spazio inerziale (ECI).
 
+    // Tre polilinee (E, N, U) per terna; posizioni impostate da
+    // #updateReferenceFrames().
     #addReferenceFrames() {
         const collection = this.#viewer.scene.primitives.add(new Cesium.PolylineCollection());
         const createAxes = () => PALETTE.frameAxes.map((cssColor) => collection.add({
@@ -2176,9 +2286,13 @@ class SceneView {
             width: FRAME_LINE_WIDTH,
             material: Cesium.Material.fromType("Color", { color: color(cssColor) })
         }));
+        // La terna ECI è creata per ultima: a t = 0, quando le due
+        // coincidono, è disegnata sopra.
         return { ecef: createAxes(), eci: createAxes() };
     }
 
+    // Porta le terne nella posizione dell'istante, con assi lunghi
+    // FRAME_AXIS_PIXELS a schermo.
     #updateReferenceFrames(frame) {
         REFERENCE_SYSTEMS.forEach((system) => {
             const { origin, axes } = frame.referenceFrames[system];
@@ -2210,6 +2324,7 @@ class SceneView {
     // un clic nello spazio è ignorato. Il trascinamento continua a
     // ruotare la vista.
 
+    // Registra il gestore del clic sinistro.
     #installPicking() {
         const viewer = this.#viewer;
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.canvas);
@@ -2242,8 +2357,9 @@ class SceneView {
 // ============================================================
 
 class Observable {
-    #listeners = new Map();
+    #listeners = new Map(); // nome dell'evento -> funzioni registrate
 
+    // Registra "listener", chiamato a ogni emissione di "event".
     on(event, listener) {
         if (!this.#listeners.has(event)) {
             this.#listeners.set(event, []);
@@ -2251,6 +2367,8 @@ class Observable {
         this.#listeners.get(event).push(listener);
     }
 
+    // Chiama, nell'ordine di registrazione, le funzioni registrate per
+    // "event", passando loro "args".
     emit(event, ...args) {
         (this.#listeners.get(event) || []).forEach((listener) => listener(...args));
     }
@@ -2303,6 +2421,8 @@ class SimulationViewModel extends Observable {
     #geolocation;
     #frame;
 
+    // "clock" e "geolocation" devono implementare SimulationClock e
+    // GeolocationService. Parte da t = 0.
     constructor(simulation, clock, geolocation) {
         super();
         this.#simulation = simulation;
@@ -2316,6 +2436,7 @@ class SimulationViewModel extends Observable {
     // PROPRIETÀ
     // --------------------------------------------------
 
+    // Vero mentre il tempo simulato scorre.
     get running() {
         return this.#clock.running;
     }
@@ -2325,22 +2446,27 @@ class SimulationViewModel extends Observable {
         return !this.running;
     }
 
+    // Modello di Terra: sfera (true) o ellissoide (false).
     get sphericalEarth() {
         return this.#simulation.useSphericalEarth;
     }
 
+    // Raggio della particella [m].
     get particleRadius() {
         return this.#particle.radius;
     }
 
+    // Latitudine del punto di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
         return this.#particle.start.latitudeDeg;
     }
 
+    // Longitudine del punto di partenza [°], in [0°, 360°).
     get longitudeDeg() {
         return this.#particle.start.longitudeDeg;
     }
 
+    // Quota di partenza [km].
     get altitudeKm() {
         return this.#particle.start.altitude / 1000;
     }
@@ -2382,6 +2508,8 @@ class SimulationViewModel extends Observable {
     // COMANDI
     // --------------------------------------------------
 
+    // Avvia o mette in pausa la simulazione; l'avvio chiude la
+    // selezione del punto.
     togglePlay() {
         this.#clock.running = !this.#clock.running;
         if (this.running) {
@@ -2421,30 +2549,39 @@ class SimulationViewModel extends Observable {
         return true;
     }
 
+    // Comandi delle condizioni iniziali: il modello valida il valore e
+    // la simulazione riparte da t = 0 (vedi #editSetup).
+
+    // Latitudine di partenza [°].
     setLatitude(deg) {
         this.#editSetup(() => this.#particle.setStartPoint(deg, this.longitudeDeg));
     }
 
+    // Longitudine di partenza [°].
     setLongitude(deg) {
         this.#editSetup(() => this.#particle.setStartPoint(this.latitudeDeg, deg));
     }
 
+    // Quota di partenza [km].
     setAltitudeKm(km) {
         this.#editSetup(() => this.#particle.setStartAltitude(km * 1000));
     }
 
+    // Una componente della terna di velocità iniziale "frame";
     // component: "speedKmh", "azimuthDeg" o "elevationDeg".
     setVelocity(frame, component, value) {
         this.#editSetup(() => this.#particle.setVelocity(frame, { [component]: value }));
     }
 
+    // Modello di Terra: sfera (true) o ellissoide (false).
     setSphericalEarth(spherical) {
         this.#editSetup(() => {
             this.#simulation.useSphericalEarth = spherical;
         });
     }
 
-    // Attivo anche durante la simulazione.
+    // Sistema in cui la telecamera resta ferma ("eci" o "ecef"). Attivo
+    // anche durante la simulazione.
     setCameraMode(mode) {
         this.cameraMode = mode;
         this.emit("change");
@@ -2494,10 +2631,8 @@ class SimulationViewModel extends Observable {
         const particle = this.#particle;
         const state = particle.state;
         const particlePositionEcef = eciToEcef(state.position, angle);
-        const inEcef = (elements) => ({
-            eci: elements.eci.inEcef(seconds),
-            ecef: elements.ecef.inEcef(seconds)
-        });
+        // { eci, ecef } -> stessi elementi in coordinate ECEF all'istante.
+        const inEcef = (elements) => bySystem((system) => elements[system].inEcef(seconds));
         const velocities = inEcef(particle.velocityArrows);
         const speedKmh = (system) => Cesium.Cartesian3.magnitude(velocities[system].vector) * KMH_PER_MS;
 
@@ -2537,6 +2672,7 @@ class SimulationViewModel extends Observable {
         this.#restarted();
     }
 
+    // Riporta modello e orologio a t = 0 e notifica le viste.
     #restarted() {
         this.#simulation.reset();
         this.#clock.reset();
@@ -2545,6 +2681,7 @@ class SimulationViewModel extends Observable {
         this.emit("change");
     }
 
+    // Chiede alle viste di nascondere il messaggio di errore.
     #hideError() {
         this.emit("error", undefined);
     }
@@ -2605,6 +2742,7 @@ window.__coriolis = {
     viewer: viewer,
     simulation: simulation,
     particle: simulation.particle,
+    // Letta al momento, perché cambia durante l'uso.
     get cameraMode() {
         return viewModel.cameraMode;
     },

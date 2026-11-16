@@ -12,6 +12,8 @@ import { SimulationClock } from "./interfaces.js";
 export class CesiumSimulationClock extends SimulationClock {
     #clock;
 
+    // Configura "cesiumClock": tempo illimitato che parte da adesso,
+    // fermo, "timeScale" volte più veloce del tempo reale quando scorre.
     constructor(cesiumClock, timeScale) {
         super();
         const start = Cesium.JulianDate.now();
@@ -24,18 +26,22 @@ export class CesiumSimulationClock extends SimulationClock {
         this.#clock = cesiumClock;
     }
 
+    // Il tempo scorre quando Cesium anima la scena.
     get running() {
         return this.#clock.shouldAnimate;
     }
 
+    // Avvia o ferma lo scorrere del tempo.
     set running(value) {
         this.#clock.shouldAnimate = value;
     }
 
+    // Riporta l'orologio all'istante iniziale.
     reset() {
         this.#clock.currentTime = this.#clock.startTime.clone();
     }
 
+    // Vero se l'orologio è all'istante iniziale.
     isAtStart() {
         return Cesium.JulianDate.equals(this.#clock.currentTime, this.#clock.startTime);
     }

@@ -39,6 +39,8 @@ const MIME = {
     ".ktx2": "image/ktx2"
 };
 
+// Percorso del file da servire per "urlPath": i percorsi /Cesium/ dalla
+// build di Cesium in node_modules, gli altri dalla cartella del progetto.
 function resolveFile(urlPath) {
     const clean = decodeURIComponent(urlPath.split("?")[0]);
     const base = clean.startsWith("/Cesium/") ? CESIUM_DIR : ROOT;

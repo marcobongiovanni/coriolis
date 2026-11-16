@@ -1,0 +1,20 @@
+# Impostazioni comuni degli editor (https://editorconfig.org).
+# In VS Code serve l'estensione "EditorConfig for VS Code".
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.md]
+# In Markdown due spazi a fine riga sono un a capo.
+trim_trailing_whitespace = false
+
+[{package.json,package-lock.json}]
+# Formato scritto da npm.
+indent_size = 2

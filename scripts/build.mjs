@@ -46,6 +46,7 @@ function orderedSources(entry) {
     const ordered = [];
     const visiting = new Set();
 
+    // Visita in profondità: prima i file importati, poi "file".
     function visit(file) {
         if (ordered.includes(file)) {
             return;
@@ -120,6 +121,7 @@ function stripModuleSyntax(code, file) {
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+// Codifica Base64 VLQ di un intero, usata dalle mappe sorgente.
 function vlq(value) {
     let v = value < 0 ? (-value << 1) | 1 : value << 1;
     let out = "";
@@ -256,6 +258,8 @@ function copyToClipboard(file) {
     return true;
 }
 
+// Esegue la build; con --copy copia il risultato negli appunti, con
+// --watch la ripete a ogni modifica dei sorgenti.
 function main() {
     const args = process.argv.slice(2);
 

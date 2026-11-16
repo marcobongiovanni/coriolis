@@ -91,6 +91,7 @@ export class CameraRig {
     // Profondità del punto afferrato con il pan [m]; undefined = nessun pan.
     #panDepth;
 
+    // Configura i comandi del mouse e il pan sulla telecamera di "viewer".
     constructor(viewer) {
         this.#viewer = viewer;
         this.#camera = viewer.camera;
@@ -98,6 +99,7 @@ export class CameraRig {
         this.#installPan();
     }
 
+    // Sistema in cui la telecamera resta ferma: "eci" o "ecef".
     setMode(mode) {
         if (mode === "eci" && this.#mode !== "eci") {
             // La posa attuale diventa quella da mantenere ferma in ECI.
@@ -145,6 +147,7 @@ export class CameraRig {
         return Math.tan(this.#camera.frustum.fov / 2) * width / Math.max(width, height);
     }
 
+    // Annota la posa attuale come impostata da qui.
     #rememberAppliedPose() {
         const camera = this.#camera;
         this.#appliedPose = {
@@ -154,6 +157,8 @@ export class CameraRig {
         };
     }
 
+    // Vero se la posa è cambiata dall'ultima impostata da qui, cioè se
+    // l'ha mossa l'utente.
     #poseChanged() {
         const camera = this.#camera;
         const applied = this.#appliedPose;
@@ -164,6 +169,7 @@ export class CameraRig {
             distance(camera.upWC, applied.up) > MOVED_AXIS_TOLERANCE;
     }
 
+    // La posa attuale (ECEF) diventa la posa da mantenere ferma in ECI.
     #captureInertialPose() {
         const camera = this.#camera;
         const pose = this.#inertialPose;
@@ -174,6 +180,8 @@ export class CameraRig {
         this.#rememberAppliedPose();
     }
 
+    // Porta la telecamera nella posa ECI, convertita in ECEF con
+    // l'angolo terrestre del frame.
     #applyInertialPose() {
         const pose = this.#inertialPose;
         const angle = this.#earthAngle;
@@ -203,6 +211,7 @@ export class CameraRig {
     // Con la telecamera ECI lo spostamento viene acquisito come movimento
     // dell'utente; con quella ECEF resta solidale con la Terra.
 
+    // Registra i gestori di inizio, movimento e fine del pan.
     #installPan() {
         const scene = this.#viewer.scene;
         const handler = new Cesium.ScreenSpaceEventHandler(scene.canvas);
@@ -233,6 +242,9 @@ export class CameraRig {
         handler.setInputAction(endPan, T.RIGHT_UP, SHIFT);
     }
 
+    // Profondità [m], lungo la direzione di vista, del punto della Terra
+    // sotto "windowPosition" (del centro della Terra se il cursore è
+    // nello spazio); almeno 1 m.
     #depthAt(windowPosition) {
         const camera = this.#camera;
         const picked = camera.pickEllipsoid(windowPosition, Cesium.Ellipsoid.WGS84);

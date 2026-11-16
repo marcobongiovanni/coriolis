@@ -24,6 +24,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCS = path.join(ROOT, "docs");
 const require = createRequire(import.meta.url);
 
+// Testo con i caratteri speciali dell'HTML sostituiti dalle entità.
 function escapeHtml(text) {
     return String(text)
         .replace(/&/g, "&amp;")
@@ -32,6 +33,7 @@ function escapeHtml(text) {
         .replace(/"/g, "&quot;");
 }
 
+// Legge pages.config.json, con valori predefiniti per i campi mancanti.
 function readConfig() {
     const file = path.join(ROOT, "pages.config.json");
     const config = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -42,6 +44,8 @@ function readConfig() {
     };
 }
 
+// Pagina index.html del sito: Cesium dalla CDN nella versione
+// "cesiumVersion", token e testi da "config".
 function pageHtml(config, cesiumVersion) {
     const cdn = `https://cdn.jsdelivr.net/npm/cesium@${cesiumVersion}/Build/Cesium`;
 
@@ -83,6 +87,7 @@ ${tokenScript}</head>
 `;
 }
 
+// Scrive la cartella docs/: pagina, script e .nojekyll.
 function main() {
     const config = readConfig();
     const cesiumVersion = require("cesium/package.json").version;

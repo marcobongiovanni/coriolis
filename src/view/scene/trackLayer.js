@@ -31,6 +31,8 @@ export class TrackLayer {
     #revision;     // Revisione della traiettoria disegnata
     #drawnCount = 0;
 
+    // Aggiunge a "primitives" le collezioni della traccia, di colore
+    // "color" (Cesium.Color).
     constructor(primitives, color) {
         this.#color = color;
         this.#frozenChunks = primitives.add(new Cesium.PrimitiveCollection());
@@ -66,6 +68,7 @@ export class TrackLayer {
         }
     }
 
+    // Cancella tutto il disegno.
     #clear() {
         this.#active.removeAll();
         this.#frozenChunks.removeAll();
@@ -74,6 +77,8 @@ export class TrackLayer {
         this.#drawnCount = 0;
     }
 
+    // Aggiunge un vertice al troncone attivo, congelandolo quando è
+    // pieno.
     #addPoint(position) {
         if (this.#points.length >= TRACK_CHUNK_SIZE) {
             const last = this.#points[this.#points.length - 1];
@@ -103,6 +108,8 @@ export class TrackLayer {
         });
     }
 
+    // Disegna "points" come Primitive statica, con la modelMatrix
+    // corrente.
     #freeze(points) {
         this.#frozenChunks.add(new Cesium.Primitive({
             geometryInstances: new Cesium.GeometryInstance({

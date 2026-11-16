@@ -8,8 +8,10 @@
 //           dalla Terra, ruota all'indietro dell'angolo di rotazione
 //           terrestre.
 //
-// I metodi statici convertono una velocità tra componenti nella terna
-// e modulo/azimuth/elevazione.
+// toCartesian/toLocal convertono un vettore tra componenti nella terna
+// e coordinate cartesiane del sistema della terna; i metodi statici
+// convertono una velocità tra componenti nella terna e
+// modulo/azimuth/elevazione.
 // ============================================================
 
 import * as Cesium from "cesium";
@@ -50,6 +52,22 @@ export class EnuFrame {
             origin: eciToEcef(this.origin, angle),
             axes: this.axes.map((axis) => eciToEcef(axis, angle))
         };
+    }
+
+    // Componenti E, N, U di un vettore -> coordinate cartesiane.
+    toCartesian(local, result = new Cesium.Cartesian3()) {
+        return Cesium.Matrix3.multiplyByVector(this.#rotation, local, result);
+    }
+
+    // Coordinate cartesiane di un vettore -> componenti E, N, U.
+    toLocal(vector, result = new Cesium.Cartesian3()) {
+        const [east, north, up] = this.axes;
+        return Cesium.Cartesian3.fromElements(
+            Cesium.Cartesian3.dot(vector, east),
+            Cesium.Cartesian3.dot(vector, north),
+            Cesium.Cartesian3.dot(vector, up),
+            result
+        );
     }
 
     // --------------------------------------------------

@@ -36,6 +36,7 @@ export class Trajectory {
         this.points.push(Cesium.Cartesian3.clone(position));
     }
 
+    // Svuota la traiettoria.
     clear() {
         this.points = [];
         this.revision++;

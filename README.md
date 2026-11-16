@@ -16,7 +16,8 @@ si parte da 45° N, 7.1° E.
 
 ## Struttura
 
-Il codice segue il paradigma **MVVM** (Model - View - ViewModel):
+Il codice segue il paradigma **MVVM** (Model - View - ViewModel).
+Le regole dell'architettura sono in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ```
 View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Simulation,
@@ -93,6 +94,7 @@ schermo); i dati vengono dal modello attraverso il ViewModel.
 | `npm run e2e` | Esegue i test dell'interfaccia nel browser (circa 2 minuti). |
 | `npm run e2e:ui` | Come sopra, con l'interfaccia grafica di Playwright. |
 | `npm run test:all` | Tutti i test. |
+| `npm run lint` | Controlla il codice con ESLint, comprese le dipendenze consentite tra i livelli MVVM. |
 | `npm run sandcastle` | Genera `dist/sandcastle.js` e lo **copia negli appunti**. |
 | `npm run pages` | Genera la cartella `docs/` da pubblicare su GitHub Pages. |
 

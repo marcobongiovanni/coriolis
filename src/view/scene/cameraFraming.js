@@ -56,10 +56,12 @@ function earthWidthFraction(position, direction, up, tanHalfFovWidth) {
 // (bisezione: allontanandosi la Terra rimpicciolisce).
 function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
     const candidate = new Cesium.Cartesian3();
+    // Posizione della telecamera a "distance" da target.
     function cameraAt(distance, result) {
         Cesium.Cartesian3.multiplyByScalar(offset, distance, result);
         return Cesium.Cartesian3.add(target, result, result);
     }
+    // Vero se a "distance" la Terra occupa più della frazione voluta.
     function tooLarge(distance) {
         const fraction = earthWidthFraction(cameraAt(distance, candidate), direction, up, tanHalfFovWidth);
         return fraction > EARTH_WIDTH_FRACTION;

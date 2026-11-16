@@ -10,6 +10,7 @@
 // Cesium occupa lo spazio restante.
 // ============================================================
 
+import { REFERENCE_SYSTEMS } from "../../geometry/referenceFrames.js";
 import { PALETTE } from "../palette.js";
 import { PANEL_CSS, PANEL_WIDTH } from "./panelStyle.js";
 
@@ -39,14 +40,14 @@ const VELOCITY_COLUMNS = [
 
 // Righe della sezione Visualizzazione: [etichetta, oggetto].
 const VISIBILITY_ROWS = [
-    ["Frame", "frame"],
+    ["Terne", "frame"],
     ["Traiettoria", "track"],
     ["Velocità", "velocity"]
 ];
 
 const LEGEND = [
-    [PALETTE.ecef, "Traccia e velocità relative (ECEF)"],
-    [PALETTE.eci, "Traccia e velocità assolute (ECI)"],
+    [PALETTE.ecef, "Traiettoria e velocità relative (ECEF)"],
+    [PALETTE.eci, "Traiettoria e velocità assolute (ECI)"],
     [PALETTE.rotationAxis, "Asse di rotazione terrestre"]
 ];
 
@@ -54,12 +55,15 @@ const LEGEND = [
 // STRUMENTI DOM
 // --------------------------------------------------
 
+// Crea un elemento DOM con le proprietà e i figli indicati.
 function element(tag, properties, children) {
     const node = Object.assign(document.createElement(tag), properties);
     node.append(...(children || []));
     return node;
 }
 
+// Icona SVG del pulsante, con descrizione per tooltip e lettori di
+// schermo.
 function setIcon(button, svg, label) {
     button.innerHTML = svg;
     button.title = label;
@@ -95,6 +99,8 @@ export class PanelView {
     #errorTimer;
     #status;
 
+    // Inserisce il pannello a sinistra di "sceneContainer" (contenitore
+    // della vista Cesium) e lo collega a "viewModel".
     constructor(sceneContainer, viewModel) {
         this.#vm = viewModel;
         this.#mount(sceneContainer);
@@ -115,6 +121,8 @@ export class PanelView {
         this.#showStatus(viewModel.frame.status);
     }
 
+    // Aggiunge lo stile e il pannello alla pagina e restringe la vista
+    // Cesium allo spazio a destra del pannello.
     #mount(sceneContainer) {
         document.head.appendChild(element("style", { textContent: PANEL_CSS }));
         this.#panel = element("div", { id: "simPanel" });
@@ -130,16 +138,20 @@ export class PanelView {
         sceneContainer.parentNode.insertBefore(this.#panel, sceneContainer);
     }
 
+    // Registra la funzione che aggiorna un controllo dallo stato del
+    // ViewModel.
     #bind(refresher) {
         this.#refreshers.push(refresher);
     }
 
+    // Aggiorna tutti i controlli.
     #refresh() {
         this.#refreshers.forEach((refresher) => refresher());
     }
 
     // --- Costruttori di controlli ----------------------------------------
 
+    // Nuova sezione del pannello con il titolo indicato.
     #section(title, className) {
         const section = element("div", { className: className ? "sim-section " + className : "sim-section" }, [
             element("h3", { textContent: title })
@@ -148,6 +160,7 @@ export class PanelView {
         return section;
     }
 
+    // Pulsante che chiama "onClick" al clic.
     #button(onClick, properties) {
         const button = element("button", properties);
         button.addEventListener("click", onClick);
@@ -218,6 +231,7 @@ export class PanelView {
 
     // --- Sezioni ---------------------------------------------------------
 
+    // Pulsanti avvia/pausa e stop, con il riquadro degli errori.
     #buildSimulationSection() {
         const vm = this.#vm;
         const section = this.#section("Simulazione");
@@ -235,6 +249,7 @@ export class PanelView {
         section.append(element("div", { className: "sim-buttons" }, [play, stop]), this.#errorBox);
     }
 
+    // Selezione del punto sul globo, latitudine, longitudine e quota.
     #buildStartSection() {
         const vm = this.#vm;
         const section = this.#section("Partenza");
@@ -265,6 +280,8 @@ export class PanelView {
         }));
     }
 
+    // Griglia della velocità iniziale: righe VELOCITY_ROWS, colonne
+    // VELOCITY_COLUMNS.
     #buildVelocitySection() {
         const vm = this.#vm;
         const grid = element("div", { className: "sim-grid" }, [
@@ -286,6 +303,7 @@ export class PanelView {
         this.#section("Velocità iniziale").append(grid);
     }
 
+    // Scelta del modello di Terra.
     #buildModelSection() {
         const vm = this.#vm;
         this.#radioGroup(this.#section("Modello"), {
@@ -310,7 +328,7 @@ export class PanelView {
         ]);
         VISIBILITY_ROWS.forEach(([labelText, item]) => {
             grid.append(element("span", { textContent: labelText }));
-            ["eci", "ecef"].forEach((frame) => {
+            REFERENCE_SYSTEMS.forEach((frame) => {
                 const checkbox = element("input", {
                     type: "checkbox",
                     title: labelText + " " + frame.toUpperCase()
@@ -327,7 +345,7 @@ export class PanelView {
         this.#radioGroup(section, {
             name: "simCameraMode",
             className: "sim-radio-row sim-camera-mode",
-            options: [["Camera ECI", "eci"], ["Camera ECEF", "ecef"]],
+            options: [["Telecamera ECI", "eci"], ["Telecamera ECEF", "ecef"]],
             read: () => vm.cameraMode,
             write: (mode) => vm.setCameraMode(mode)
         });
@@ -337,11 +355,13 @@ export class PanelView {
         }));
     }
 
+    // Riquadro dello stato, aggiornato a ogni istante da #showStatus().
     #buildStatusSection() {
         this.#status = element("div", { className: "sim-status" });
         this.#section("Stato").append(this.#status);
     }
 
+    // Colori della scena e loro significato.
     #buildLegendSection() {
         const section = this.#section("Legenda", "sim-legend");
         LEGEND.forEach(([color, text]) => {
@@ -353,6 +373,7 @@ export class PanelView {
 
     // --- Messaggi e stato ---------------------------------------------------
 
+    // Mostra "message" per ERROR_DURATION_MS; undefined lo nasconde.
     #showError(message) {
         clearTimeout(this.#errorTimer);
         this.#errorBox.style.display = message ? "block" : "none";
@@ -362,6 +383,7 @@ export class PanelView {
         }
     }
 
+    // Righe "etichetta: valore" in colonna (testo monospaziato).
     #showStatus(status) {
         const position = status.latitudeDeg === undefined
             ? "-"

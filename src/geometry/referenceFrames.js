@@ -12,6 +12,19 @@ import * as Cesium from "cesium";
 export const OMEGA = 7.292115e-5; // Velocità angolare terrestre [rad/s]
 export const KMH_PER_MS = 3.6;    // Conversione m/s -> km/h
 
+// Asse di rotazione terrestre. Per definizione dei due sistemi coincide
+// con il loro asse Z comune: tutte le conversioni di questo file
+// ruotano attorno a Z.
+export const EARTH_ROTATION_AXIS = Cesium.Cartesian3.UNIT_Z;
+
+// Sistemi di riferimento, nell'ordine in cui compaiono nell'interfaccia.
+export const REFERENCE_SYSTEMS = ["eci", "ecef"];
+
+// Oggetto { eci, ecef } con il valore create(system) per ogni sistema.
+export function bySystem(create) {
+    return Object.fromEntries(REFERENCE_SYSTEMS.map((system) => [system, create(system)]));
+}
+
 // Angolo di cui la Terra ha ruotato dopo "seconds" secondi simulati.
 export function earthRotationAngle(seconds) {
     return OMEGA * seconds;
@@ -42,14 +55,23 @@ export function ecefToEci(vector, angle, result) {
     return rotateAboutZ(vector, angle, result);
 }
 
-// Velocità relativa alla Terra, in coordinate ECI: v - ω × r,
-// con ω = (0, 0, OMEGA).
-export function relativeVelocity(position, velocity, result) {
+// Velocità di trascinamento ω × r di un punto solidale con la Terra
+// in "position", con ω = (0, 0, OMEGA).
+export function dragVelocity(position, result) {
     result = result || new Cesium.Cartesian3();
-    result.x = velocity.x + OMEGA * position.y;
-    result.y = velocity.y - OMEGA * position.x;
-    result.z = velocity.z;
+    result.x = -OMEGA * position.y;
+    result.y = OMEGA * position.x;
+    result.z = 0;
     return result;
+}
+
+const scratchDrag = new Cesium.Cartesian3();
+
+// Velocità relativa alla Terra: v - ω × r. "result" può coincidere
+// con "velocity".
+export function relativeVelocity(position, velocity, result) {
+    const drag = dragVelocity(position, scratchDrag);
+    return Cesium.Cartesian3.subtract(velocity, drag, result || new Cesium.Cartesian3());
 }
 
 // Angolo in gradi ricondotto all'intervallo [0°, 360°). Gli angoli già

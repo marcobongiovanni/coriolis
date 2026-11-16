@@ -23,6 +23,7 @@
 import * as Cesium from "cesium";
 import {
     KMH_PER_MS,
+    bySystem,
     earthRotationAngle,
     eciToEcef,
     normalizeDegrees
@@ -54,6 +55,8 @@ export class SimulationViewModel extends Observable {
     #geolocation;
     #frame;
 
+    // "clock" e "geolocation" devono implementare SimulationClock e
+    // GeolocationService. Parte da t = 0.
     constructor(simulation, clock, geolocation) {
         super();
         this.#simulation = simulation;
@@ -67,6 +70,7 @@ export class SimulationViewModel extends Observable {
     // PROPRIETÀ
     // --------------------------------------------------
 
+    // Vero mentre il tempo simulato scorre.
     get running() {
         return this.#clock.running;
     }
@@ -76,22 +80,27 @@ export class SimulationViewModel extends Observable {
         return !this.running;
     }
 
+    // Modello di Terra: sfera (true) o ellissoide (false).
     get sphericalEarth() {
         return this.#simulation.useSphericalEarth;
     }
 
+    // Raggio della particella [m].
     get particleRadius() {
         return this.#particle.radius;
     }
 
+    // Latitudine del punto di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
         return this.#particle.start.latitudeDeg;
     }
 
+    // Longitudine del punto di partenza [°], in [0°, 360°).
     get longitudeDeg() {
         return this.#particle.start.longitudeDeg;
     }
 
+    // Quota di partenza [km].
     get altitudeKm() {
         return this.#particle.start.altitude / 1000;
     }
@@ -133,6 +142,8 @@ export class SimulationViewModel extends Observable {
     // COMANDI
     // --------------------------------------------------
 
+    // Avvia o mette in pausa la simulazione; l'avvio chiude la
+    // selezione del punto.
     togglePlay() {
         this.#clock.running = !this.#clock.running;
         if (this.running) {
@@ -172,30 +183,39 @@ export class SimulationViewModel extends Observable {
         return true;
     }
 
+    // Comandi delle condizioni iniziali: il modello valida il valore e
+    // la simulazione riparte da t = 0 (vedi #editSetup).
+
+    // Latitudine di partenza [°].
     setLatitude(deg) {
         this.#editSetup(() => this.#particle.setStartPoint(deg, this.longitudeDeg));
     }
 
+    // Longitudine di partenza [°].
     setLongitude(deg) {
         this.#editSetup(() => this.#particle.setStartPoint(this.latitudeDeg, deg));
     }
 
+    // Quota di partenza [km].
     setAltitudeKm(km) {
         this.#editSetup(() => this.#particle.setStartAltitude(km * 1000));
     }
 
+    // Una componente della terna di velocità iniziale "frame";
     // component: "speedKmh", "azimuthDeg" o "elevationDeg".
     setVelocity(frame, component, value) {
         this.#editSetup(() => this.#particle.setVelocity(frame, { [component]: value }));
     }
 
+    // Modello di Terra: sfera (true) o ellissoide (false).
     setSphericalEarth(spherical) {
         this.#editSetup(() => {
             this.#simulation.useSphericalEarth = spherical;
         });
     }
 
-    // Attivo anche durante la simulazione.
+    // Sistema in cui la telecamera resta ferma ("eci" o "ecef"). Attivo
+    // anche durante la simulazione.
     setCameraMode(mode) {
         this.cameraMode = mode;
         this.emit("change");
@@ -245,10 +265,8 @@ export class SimulationViewModel extends Observable {
         const particle = this.#particle;
         const state = particle.state;
         const particlePositionEcef = eciToEcef(state.position, angle);
-        const inEcef = (elements) => ({
-            eci: elements.eci.inEcef(seconds),
-            ecef: elements.ecef.inEcef(seconds)
-        });
+        // { eci, ecef } -> stessi elementi in coordinate ECEF all'istante.
+        const inEcef = (elements) => bySystem((system) => elements[system].inEcef(seconds));
         const velocities = inEcef(particle.velocityArrows);
         const speedKmh = (system) => Cesium.Cartesian3.magnitude(velocities[system].vector) * KMH_PER_MS;
 
@@ -288,6 +306,7 @@ export class SimulationViewModel extends Observable {
         this.#restarted();
     }
 
+    // Riporta modello e orologio a t = 0 e notifica le viste.
     #restarted() {
         this.#simulation.reset();
         this.#clock.reset();
@@ -296,6 +315,7 @@ export class SimulationViewModel extends Observable {
         this.emit("change");
     }
 
+    // Chiede alle viste di nascondere il messaggio di errore.
     #hideError() {
         this.emit("error", undefined);
     }

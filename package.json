@@ -2,13 +2,14 @@
   "name": "coriolis",
   "version": "1.0.0",
   "private": true,
-  "description": "Simulazione CesiumJS dell'accelerazione di Coriolis: sfera in caduta libera con rimbalzi elastici, sistemi ECI ed ECEF.",
+  "description": "Simulazione CesiumJS dell'accelerazione di Coriolis: particella in caduta libera con rimbalzi elastici, sistemi ECI ed ECEF.",
   "type": "module",
   "scripts": {
     "dev": "node scripts/server.mjs --watch",
     "build": "node scripts/build.mjs",
     "sandcastle": "node scripts/build.mjs --copy",
     "pages": "node scripts/pages.mjs",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e:install": "playwright install chromium",
@@ -20,7 +21,10 @@
     "cesium": "^1.147.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@playwright/test": "1.61.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
     "vite": "^6.4.0",
     "vitest": "^3.2.4"
   },

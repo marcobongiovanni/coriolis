@@ -336,7 +336,7 @@ test("le caselle di Visualizzazione nascondono e mostrano gli oggetti", async ({
     expect(await isShown()).toEqual({ arrowEci: true, arrowEcef: true, frameEci: true, frameEcef: true });
 
     await page.getByTitle("Velocità ECI").uncheck();
-    await page.getByTitle("Frame ECEF").uncheck();
+    await page.getByTitle("Terne ECEF").uncheck();
     expect(await isShown()).toEqual({ arrowEci: false, arrowEcef: true, frameEci: true, frameEcef: false });
 
     // Funzionano anche durante la simulazione.
@@ -432,8 +432,8 @@ function expectSamePose(a, b) {
 
 test("cambio di telecamera ECI/ECEF senza cambio di vista", async ({ page }) => {
     const errors = await openApp(page);
-    const eciRadio = page.getByLabel("Camera ECI");
-    const ecefRadio = page.getByLabel("Camera ECEF");
+    const eciRadio = page.getByLabel("Telecamera ECI");
+    const ecefRadio = page.getByLabel("Telecamera ECEF");
 
     // Predefinita: telecamera ECI, con l'inquadratura iniziale.
     await expect(eciRadio).toBeChecked();
@@ -499,7 +499,7 @@ test("pan con Shift + trascinamento destro: trasla senza ruotare", async ({ page
 
     for (const mode of ["eci", "ecef"]) {
         if (mode === "ecef") {
-            await page.getByLabel("Camera ECEF").check();
+            await page.getByLabel("Telecamera ECEF").check();
         }
 
         // Punto della Terra (ellissoide) sotto il cursore.

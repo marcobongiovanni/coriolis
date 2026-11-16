@@ -6,6 +6,9 @@ import { describe, it, expect } from "vitest";
 import * as Cesium from "cesium";
 import {
     OMEGA,
+    REFERENCE_SYSTEMS,
+    bySystem,
+    dragVelocity,
     eciToEcef,
     ecefToEci,
     normalizeDegrees,
@@ -37,6 +40,19 @@ describe("trasformazioni ECI <-> ECEF", function () {
         const expected = eciToEcef(p, 0.3);
         eciToEcef(p, 0.3, p);
         expect(Cesium.Cartesian3.distance(p, expected)).toBeLessThan(1e-15);
+    });
+
+    it("velocità di trascinamento: ω × r, verso Est di modulo ω·ρ", function () {
+        const r = new Cesium.Cartesian3(7e6, 0, 2e6);
+        const drag = dragVelocity(r);
+        expect(drag.x).toBeCloseTo(0, 12);
+        expect(drag.y).toBeCloseTo(OMEGA * 7e6, 12);
+        expect(drag.z).toBe(0);
+    });
+
+    it("bySystem crea un valore per ogni sistema di riferimento", function () {
+        expect(bySystem((system) => system.toUpperCase())).toEqual({ eci: "ECI", ecef: "ECEF" });
+        expect(REFERENCE_SYSTEMS).toEqual(["eci", "ecef"]);
     });
 
     it("velocità relativa: v - ω × r", function () {

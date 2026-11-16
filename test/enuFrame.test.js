@@ -7,6 +7,18 @@ import { describe, it, expect } from "vitest";
 import * as Cesium from "cesium";
 import { EnuFrame } from "../src/model/enuFrame.js";
 
+describe("componenti ENU <-> coordinate cartesiane", function () {
+    it("toLocal annulla toCartesian e gli assi sono Est, Nord, Su", function () {
+        const frame = new EnuFrame("ecef");
+        frame.placeAt(Cesium.Cartesian3.fromDegrees(30, 45, 1000));
+        const local = new Cesium.Cartesian3(3, -4, 5);
+        const back = frame.toLocal(frame.toCartesian(local));
+        expect(Cesium.Cartesian3.distance(back, local)).toBeLessThan(1e-12);
+        const east = frame.toCartesian(new Cesium.Cartesian3(1, 0, 0));
+        expect(Cesium.Cartesian3.distance(east, frame.axes[0])).toBeLessThan(1e-15);
+    });
+});
+
 describe("conversioni modulo/azimuth/elevazione <-> ENU", function () {
     it.each([
         [1000, 0, 0],

@@ -7,6 +7,7 @@
 // browser, finti oggetti nei test) vengono scelte in main.js.
 // ============================================================
 
+// Errore lanciato dai metodi di un'interfaccia non implementati.
 function notImplemented(member) {
     throw new Error(`${member} non implementato`);
 }
@@ -26,6 +27,7 @@ export class SimulationClock {
         return notImplemented("SimulationClock.running");
     }
 
+    // Avvia (true) o ferma (false) lo scorrere del tempo simulato.
     set running(value) {
         notImplemented("SimulationClock.running");
     }

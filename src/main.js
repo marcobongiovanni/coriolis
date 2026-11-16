@@ -47,6 +47,7 @@ window.__coriolis = {
     viewer: viewer,
     simulation: simulation,
     particle: simulation.particle,
+    // Letta al momento, perché cambia durante l'uso.
     get cameraMode() {
         return viewModel.cameraMode;
     },

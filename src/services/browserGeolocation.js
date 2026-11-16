@@ -19,11 +19,15 @@ const GEOLOCATION_OPTIONS = {
 export class BrowserGeolocationService extends GeolocationService {
     #geolocation;
 
+    // "geolocation": navigator.geolocation (undefined se il browser non
+    // la fornisce).
     constructor(geolocation) {
         super();
         this.#geolocation = geolocation;
     }
 
+    // Promise della posizione, o di undefined se non disponibile (mai
+    // rifiutata: l'errore è solo annotato nella console).
     getCurrentPosition() {
         return new Promise((resolve) => {
             if (!this.#geolocation) {

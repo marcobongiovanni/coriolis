@@ -13,6 +13,7 @@
 // ============================================================
 
 import * as Cesium from "cesium";
+import { REFERENCE_SYSTEMS, bySystem } from "../../geometry/referenceFrames.js";
 import { PALETTE } from "../palette.js";
 import { CameraRig } from "./cameraRig.js";
 import { TrackLayer } from "./trackLayer.js";
@@ -33,8 +34,13 @@ const AXIS_WIDTH = 1.5;           // [px]
 const FRAME_AXIS_PIXELS = 70; // [px]
 const FRAME_LINE_WIDTH = 3;   // [px]
 
-const REFERENCE_SYSTEMS = ["eci", "ecef"];
+// Nomi delle frecce della velocità (mostrati da Cesium alla selezione).
+const VELOCITY_ARROW_NAMES = {
+    eci: "Velocità assoluta (ECI)",
+    ecef: "Velocità relativa (ECEF)"
+};
 
+// Colore di Cesium dal nome CSS.
 function color(cssName) {
     return Cesium.Color.fromCssColorString(cssName);
 }
@@ -58,14 +64,8 @@ export class SceneView {
         this.#camera = new CameraRig(viewer);
 
         this.#addParticle();
-        this.#arrows = {
-            eci: this.#addVelocityArrow("Velocità assoluta (ECI)", PALETTE.eci, "eci"),
-            ecef: this.#addVelocityArrow("Velocità relativa (ECEF)", PALETTE.ecef, "ecef")
-        };
-        this.#tracks = {
-            eci: new TrackLayer(viewer.scene.primitives, color(PALETTE.eci)),   // ferma in ECI
-            ecef: new TrackLayer(viewer.scene.primitives, color(PALETTE.ecef))  // solidale con la Terra
-        };
+        this.#arrows = bySystem((system) => this.#addVelocityArrow(system));
+        this.#tracks = bySystem((system) => new TrackLayer(viewer.scene.primitives, color(PALETTE[system])));
         this.#addRotationAxis();
         this.#startMarker = this.#addStartMarker();
         this.#framePolylines = this.#addReferenceFrames();
@@ -95,11 +95,13 @@ export class SceneView {
     // AGGIORNAMENTO
     // --------------------------------------------------
 
+    // Stato del ViewModel all'istante "time" dell'orologio di Cesium.
     #frameAt(time) {
         const clock = this.#viewer.clock;
         return this.#vm.frameAt(Cesium.JulianDate.secondsDifference(time, clock.startTime));
     }
 
+    // Inquadratura iniziale sul punto di partenza.
     #frameStartPoint() {
         this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startParticlePosition);
     }
@@ -151,8 +153,9 @@ export class SceneView {
         });
     }
 
-    // system: "eci" (velocità assoluta) o "ecef" (velocità relativa).
-    #addVelocityArrow(name, cssColor, system) {
+    // Freccia della velocità assoluta ("eci") o relativa ("ecef"),
+    // aggiornata da Cesium a ogni frame.
+    #addVelocityArrow(system) {
         const velocityAt = (time) => this.#frameAt(time).velocities[system];
         const positions = (time) => {
             const { origin: center, vector: velocity } = velocityAt(time);
@@ -171,7 +174,7 @@ export class SceneView {
         };
 
         return this.#viewer.entities.add({
-            name: name,
+            name: VELOCITY_ARROW_NAMES[system],
             polyline: {
                 positions: new Cesium.CallbackProperty(positions, false),
                 show: new Cesium.CallbackProperty((time) => {
@@ -180,7 +183,7 @@ export class SceneView {
                 width: VELOCITY_ARROW_WIDTH,
                 // NONE: segmento rettilineo nello spazio.
                 arcType: Cesium.ArcType.NONE,
-                material: new Cesium.PolylineArrowMaterialProperty(color(cssColor))
+                material: new Cesium.PolylineArrowMaterialProperty(color(PALETTE[system]))
             }
         });
     }
@@ -193,6 +196,7 @@ export class SceneView {
     // - ECI (rossa): vertici in ECI, disegnati con la rotazione
     //   ECI -> ECEF del frame: la traccia resta ferma nello spazio.
 
+    // Aggiorna la rotazione della traccia ECI e aggiunge i punti nuovi.
     #updateTracks(frame) {
         Cesium.Matrix3.fromRotationZ(-frame.earthAngle, this.#scratchRotation3);
         Cesium.Matrix4.fromRotation(this.#scratchRotation3, this.#scratchRotation4);
@@ -207,6 +211,8 @@ export class SceneView {
     // ASSE DI ROTAZIONE E MARCATORE DEL PUNTO DI PARTENZA
     // --------------------------------------------------
 
+    // Due tratti lungo l'asse fornito dal ViewModel, dalla superficie
+    // di ciascun polo fino a AXIS_HALF_LENGTH dal centro.
     #addRotationAxis() {
         const polarRadius = Cesium.Ellipsoid.WGS84.radii.z;
         const direction = this.#vm.rotationAxis;
@@ -245,6 +251,8 @@ export class SceneView {
     // X (rosso) Est, Y (verde) Nord, Z (blu) Su: una terna solidale con
     // la Terra (ECEF) e una ferma nello spazio inerziale (ECI).
 
+    // Tre polilinee (E, N, U) per terna; posizioni impostate da
+    // #updateReferenceFrames().
     #addReferenceFrames() {
         const collection = this.#viewer.scene.primitives.add(new Cesium.PolylineCollection());
         const createAxes = () => PALETTE.frameAxes.map((cssColor) => collection.add({
@@ -252,9 +260,13 @@ export class SceneView {
             width: FRAME_LINE_WIDTH,
             material: Cesium.Material.fromType("Color", { color: color(cssColor) })
         }));
+        // La terna ECI è creata per ultima: a t = 0, quando le due
+        // coincidono, è disegnata sopra.
         return { ecef: createAxes(), eci: createAxes() };
     }
 
+    // Porta le terne nella posizione dell'istante, con assi lunghi
+    // FRAME_AXIS_PIXELS a schermo.
     #updateReferenceFrames(frame) {
         REFERENCE_SYSTEMS.forEach((system) => {
             const { origin, axes } = frame.referenceFrames[system];
@@ -286,6 +298,7 @@ export class SceneView {
     // un clic nello spazio è ignorato. Il trascinamento continua a
     // ruotare la vista.
 
+    // Registra il gestore del clic sinistro.
     #installPicking() {
         const viewer = this.#viewer;
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.canvas);

@@ -22,10 +22,10 @@
 
 import * as Cesium from "cesium";
 import {
-    OMEGA,
+    bySystem,
+    dragVelocity,
     earthRotationAngle,
     eciToEcef,
-    enuRotation,
     normalizeDegrees,
     relativeVelocity
 } from "../geometry/referenceFrames.js";
@@ -39,13 +39,12 @@ export const DEFAULT_PARTICLE_RADIUS = 125000; // [m]
 // la posizione geografica del PC.
 export const DEFAULT_START_POINT = { latitudeDeg: 45.0, longitudeDeg: 7.1 };
 
-// Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
-// partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
-//   "relative": rispetto alla Terra (ECEF);
-//   "absolute": rispetto allo spazio inerziale (ECI).
-// L'ultima terna modificata è quella "di riferimento" (velocityMaster):
-// l'altra viene ricalcolata da questa.
-export const VELOCITY_FRAMES = ["relative", "absolute"];
+// Grandezze rappresentate dalle frecce della velocità, in coordinate
+// ECI: assoluta (eci), v, e relativa alla Terra (ecef), v - ω × r.
+const VELOCITY_QUANTITIES = {
+    eci: (state, result) => Cesium.Cartesian3.clone(state.velocity, result),
+    ecef: (state, result) => relativeVelocity(state.position, state.velocity, result)
+};
 
 export class Particle {
     radius;
@@ -58,6 +57,12 @@ export class Particle {
         altitude: 0 // Quota del punto più basso della particella [m]
     };
 
+    // Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
+    // partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
+    //   "relative": rispetto alla Terra (ECEF);
+    //   "absolute": rispetto allo spazio inerziale (ECI).
+    // L'ultima terna modificata è quella "di riferimento"
+    // (velocityMaster): l'altra viene ricalcolata da questa.
     velocityMaster = "relative";
 
     velocity = {
@@ -79,20 +84,15 @@ export class Particle {
         altitude: 0 // Quota del punto più basso della particella [m]
     };
 
-    // Velocità corrente del centro: assoluta (eci), v, e relativa alla
-    // Terra (ecef), v - ω × r.
-    velocityArrows = {
-        eci: new Arrow("eci", this.state, (state, result) => Cesium.Cartesian3.clone(state.velocity, result)),
-        ecef: new Arrow("ecef", this.state, (state, result) => relativeVelocity(state.position, state.velocity, result))
-    };
+    // Velocità corrente del centro: assoluta (eci) e relativa (ecef).
+    velocityArrows = bySystem((system) => new Arrow(system, this.state, VELOCITY_QUANTITIES[system]));
 
     // Terne Est-Nord-Su con origine nel centro della particella a t = 0.
-    startFrames = { eci: new EnuFrame("eci"), ecef: new EnuFrame("ecef") };
+    startFrames = bySystem((system) => new EnuFrame(system));
 
     // Posizioni del centro dall'inizio della simulazione.
-    trajectories = { eci: new Trajectory("eci"), ecef: new Trajectory("ecef") };
+    trajectories = bySystem((system) => new Trajectory(system));
 
-    #enu = new Cesium.Matrix3();
     #scratchEcef = new Cesium.Cartesian3();
 
     constructor(radius = DEFAULT_PARTICLE_RADIUS) {
@@ -136,12 +136,12 @@ export class Particle {
     // lo stato corrente e fa ripartire le traiettorie.
     reset(earth) {
         this.#computeInitialPosition(earth);
+        Object.values(this.startFrames).forEach((frame) => frame.placeAt(this.initial.position));
         this.#computeInitialVelocity();
         Cesium.Cartesian3.clone(this.initial.position, this.state.position);
         Cesium.Cartesian3.clone(this.initial.velocityECI, this.state.velocity);
         this.updateAltitude(earth);
 
-        Object.values(this.startFrames).forEach((frame) => frame.placeAt(this.initial.position));
         Object.values(this.trajectories).forEach((trajectory) => trajectory.clear());
         this.recordTrajectory(0);
     }
@@ -161,6 +161,7 @@ export class Particle {
         return Cesium.defined(h) ? h - this.radius : undefined;
     }
 
+    // Aggiorna la quota dello stato corrente (0 se non definita).
     updateAltitude(earth) {
         const c = this.clearance(earth, new Cesium.Cartesian3());
         this.state.altitude = Cesium.defined(c) ? c : 0;
@@ -183,30 +184,24 @@ export class Particle {
         );
     }
 
-    // A t = 0 le due terne sono legate da v_ECI = v_ECEF + ω × r, dove
-    // ω × r (velocità di trascinamento nel centro della particella)
-    // nella terna ENU è diretta verso Est, di modulo ω·ρ (ρ = distanza
-    // dall'asse di rotazione).
+    // A t = 0 le due terne di velocità sono legate da
+    // v_ECI = v_ECEF + ω × r, con ω × r velocità di trascinamento nel
+    // centro della particella. La terna di riferimento (velocityMaster)
+    // determina l'altra. Richiede le terne già posizionate (placeAt).
     #computeInitialVelocity() {
-        const origin = this.initial.position;
-        const enu = enuRotation(origin, this.#enu);
-        const relativeIsMaster = this.velocityMaster === "relative";
-        const master = relativeIsMaster ? this.velocity.relative : this.velocity.absolute;
-        const derived = relativeIsMaster ? this.velocity.absolute : this.velocity.relative;
+        const C3 = Cesium.Cartesian3;
+        const frame = this.startFrames.ecef; // A t = 0 ECEF = ECI
+        const initial = this.initial;
+        const drag = dragVelocity(initial.position);
 
-        const drag = new Cesium.Cartesian3(OMEGA * Math.hypot(origin.x, origin.y), 0, 0);
-        const localMaster = EnuFrame.fromSpherical(master);
-        const localDerived = relativeIsMaster
-            ? Cesium.Cartesian3.add(localMaster, drag, new Cesium.Cartesian3())
-            : Cesium.Cartesian3.subtract(localMaster, drag, new Cesium.Cartesian3());
-        EnuFrame.toSpherical(localDerived, derived);
-
-        // Da ENU a coordinate cartesiane (ECEF = ECI a t = 0).
-        Cesium.Matrix3.multiplyByVector(
-            enu, relativeIsMaster ? localMaster : localDerived, this.initial.velocityECEF
-        );
-        Cesium.Matrix3.multiplyByVector(
-            enu, relativeIsMaster ? localDerived : localMaster, this.initial.velocityECI
-        );
+        if (this.velocityMaster === "relative") {
+            frame.toCartesian(EnuFrame.fromSpherical(this.velocity.relative), initial.velocityECEF);
+            C3.add(initial.velocityECEF, drag, initial.velocityECI);
+            EnuFrame.toSpherical(frame.toLocal(initial.velocityECI), this.velocity.absolute);
+        } else {
+            frame.toCartesian(EnuFrame.fromSpherical(this.velocity.absolute), initial.velocityECI);
+            C3.subtract(initial.velocityECI, drag, initial.velocityECEF);
+            EnuFrame.toSpherical(frame.toLocal(initial.velocityECEF), this.velocity.relative);
+        }
     }
 }
