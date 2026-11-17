@@ -81,7 +81,7 @@ export class Simulation {
         }
 
         this.time = target;
-        this.particle.updateAltitude(this.earth);
+        this.particle.updateDerivedState(this.earth);
         this.particle.recordTrajectory(target);
     }
 

@@ -56,11 +56,12 @@ describe("condizioni iniziali", function () {
         expect(particle.velocityMaster).toBe("absolute");
     });
 
-    it("il raggio è una proprietà della particella", function () {
+    it("il raggio è solo quello della sfera disegnata: il baricentro sta sulla superficie", function () {
         const particle = new Particle(1000);
         particle.setStartAltitude(0);
         particle.reset(SPHERICAL_EARTH);
-        expect(Cesium.Cartesian3.magnitude(particle.initial.position)).toBeCloseTo(EARTH_RADIUS + 1000, 6);
+        expect(Cesium.Cartesian3.magnitude(particle.initial.position)).toBeCloseTo(EARTH_RADIUS, 6);
+        expect(Cesium.Cartesian3.magnitude(particle.initial.sphereCenter)).toBeCloseTo(EARTH_RADIUS + 1000, 6);
         expect(particle.state.altitude).toBeCloseTo(0, 6);
     });
 });
@@ -71,18 +72,23 @@ describe("stato iniziale", function () {
         expect(particle.state.altitude).toBeCloseTo(300000, 3);
     });
 
-    it("con Terra sferica la particella parte sulla verticale radiale del punto", function () {
+    it("con Terra sferica baricentro e centro della sfera sono sulla verticale radiale del punto", function () {
         const particle = createParticle({ latitude: 30, longitude: 100 });
         const surface = Cesium.Cartesian3.fromDegrees(100, 30, 0);
-        expect(Cesium.Cartesian3.angleBetween(particle.initial.position, surface)).toBeLessThan(1e-12);
-        expect(Cesium.Cartesian3.magnitude(particle.initial.position))
-            .toBeCloseTo(EARTH_RADIUS + DEFAULT_PARTICLE_RADIUS + 225000, 3);
+        const { position, sphereCenter } = particle.initial;
+        expect(Cesium.Cartesian3.angleBetween(position, surface)).toBeLessThan(1e-12);
+        expect(Cesium.Cartesian3.angleBetween(sphereCenter, surface)).toBeLessThan(1e-12);
+        expect(Cesium.Cartesian3.magnitude(position)).toBeCloseTo(EARTH_RADIUS + 225000, 3);
+        expect(Cesium.Cartesian3.magnitude(sphereCenter)).toBeCloseTo(EARTH_RADIUS + 225000 + DEFAULT_PARTICLE_RADIUS, 3);
     });
 
-    it("con Terra ellissoidale la particella parte lungo la normale geodetica", function () {
+    it("con Terra ellissoidale baricentro e centro della sfera sono sulla normale geodetica", function () {
         const particle = createParticle({ spherical: false, latitude: 30, longitude: 100 });
-        const expected = Cesium.Cartesian3.fromDegrees(100, 30, DEFAULT_PARTICLE_RADIUS + 225000);
-        expect(Cesium.Cartesian3.distance(particle.initial.position, expected)).toBeLessThan(1e-3);
+        const { position, sphereCenter } = particle.initial;
+        const expectedPosition = Cesium.Cartesian3.fromDegrees(100, 30, 225000);
+        const expectedCenter = Cesium.Cartesian3.fromDegrees(100, 30, 225000 + DEFAULT_PARTICLE_RADIUS);
+        expect(Cesium.Cartesian3.distance(position, expectedPosition)).toBeLessThan(1e-3);
+        expect(Cesium.Cartesian3.distance(sphereCenter, expectedCenter)).toBeLessThan(1e-3);
     });
 
     it("reset riporta lo stato corrente a quello iniziale", function () {
@@ -156,22 +162,22 @@ describe("frecce della velocità", function () {
         expect(Cesium.Cartesian3.distance(particle.velocityArrows.ecef.value(), expectedRelative)).toBeLessThan(1e-9);
     });
 
-    it("in ECEF: applicati nel centro della particella e ruotati con la Terra", function () {
+    it("in ECEF: applicate nel centro della sfera e ruotate con la Terra", function () {
         const particle = createParticle({ relative: { speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
         const t = 1800;
         const { origin, vector } = particle.velocityArrows.eci.inEcef(t);
-        expect(Cesium.Cartesian3.distance(origin, eciToEcef(particle.state.position, OMEGA * t))).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(origin, eciToEcef(particle.state.sphereCenter, OMEGA * t))).toBeLessThan(1e-6);
         expect(Cesium.Cartesian3.distance(vector, eciToEcef(particle.state.velocity, OMEGA * t))).toBeLessThan(1e-9);
     });
 });
 
 describe("terne nel punto di partenza", function () {
-    it("hanno origine nel centro iniziale della particella e assi Est, Nord, Su", function () {
+    it("hanno origine nel centro iniziale della sfera e assi Est, Nord, Su", function () {
         const particle = createParticle({ latitude: 30, longitude: 100 });
-        const enu = enuRotation(particle.initial.position);
+        const enu = enuRotation(particle.initial.sphereCenter);
         Object.values(particle.startFrames).forEach((frame) => {
             const { origin, axes } = frame.inEcef(0);
-            expect(Cesium.Cartesian3.distance(origin, particle.initial.position)).toBeLessThan(1e-6);
+            expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
             axes.forEach((axis, i) => {
                 const expected = Cesium.Matrix3.getColumn(enu, i, new Cesium.Cartesian3());
                 expect(Cesium.Cartesian3.distance(axis, expected)).toBeLessThan(1e-12);
@@ -184,8 +190,8 @@ describe("terne nel punto di partenza", function () {
         const t = 3600;
         const ecef = particle.startFrames.ecef.inEcef(t);
         const eci = particle.startFrames.eci.inEcef(t);
-        expect(Cesium.Cartesian3.distance(ecef.origin, particle.initial.position)).toBeLessThan(1e-6);
-        const rotated = eciToEcef(particle.initial.position, OMEGA * t);
+        expect(Cesium.Cartesian3.distance(ecef.origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
+        const rotated = eciToEcef(particle.initial.sphereCenter, OMEGA * t);
         expect(Cesium.Cartesian3.distance(eci.origin, rotated)).toBeLessThan(1e-6);
     });
 
@@ -194,7 +200,7 @@ describe("terne nel punto di partenza", function () {
         particle.setStartPoint(-20, 200);
         particle.reset(SPHERICAL_EARTH);
         const { origin } = particle.startFrames.ecef.inEcef(0);
-        expect(Cesium.Cartesian3.distance(origin, particle.initial.position)).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
     });
 });
 
@@ -218,17 +224,17 @@ describe("traiettorie", function () {
         expect(trajectory.revision).toBe(1);
     });
 
-    it("dopo il reset contengono solo la posizione iniziale", function () {
+    it("dopo il reset contengono solo il centro iniziale della sfera", function () {
         const particle = createParticle();
         Object.values(particle.trajectories).forEach((trajectory) => {
             expect(trajectory.points).toHaveLength(1);
-            expect(Cesium.Cartesian3.distance(trajectory.points[0], particle.initial.position)).toBeLessThan(1e-6);
+            expect(Cesium.Cartesian3.distance(trajectory.points[0], particle.initial.sphereCenter)).toBeLessThan(1e-6);
         });
     });
 
     it("la traiettoria ECEF è quella ECI vista dalla Terra in rotazione", function () {
         const particle = createParticle();
-        particle.state.position.x += 1e5;
+        particle.state.sphereCenter.x += 1e5;
         particle.recordTrajectory(1800);
         const eci = particle.trajectories.eci.points[1];
         const ecef = particle.trajectories.ecef.points[1];

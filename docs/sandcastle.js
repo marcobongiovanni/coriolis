@@ -138,10 +138,12 @@ function directionEnu(azimuthDeg, elevationDeg) {
 //   dall'ellissoide WGS84 visualizzato da Cesium.
 //
 // TERRA ELLISSOIDALE (WGS84)
-// - Gravità: massa puntiforme + termine J2 dello schiacciamento.
-//   Insieme alla forza centrifuga la superficie WGS84 risulta (quasi)
-//   equipotenziale: un corpo fermo rispetto alla Terra non "scivola"
-//   verso i poli.
+// - Gravità: massa puntiforme + termini zonali J2 e J4 dello
+//   schiacciamento. Insieme alla forza centrifuga la superficie WGS84
+//   risulta equipotenziale a meno dei termini successivi (J6, ~1e-8):
+//   un corpo fermo rispetto alla Terra sulla superficie non "scivola"
+//   verso l'equatore. Con il solo J2 lo scostamento era ~35 volte
+//   maggiore.
 // - Superficie: ellissoide WGS84, normale geodetica.
 //
 // Entrambe le superfici sono simmetriche attorno all'asse Z, quindi
@@ -154,6 +156,18 @@ const EARTH_RADIUS = 6371008.8;          // Raggio medio (IUGG) [m]
 const WGS84 = Cesium.Ellipsoid.WGS84;
 const EQUATORIAL_RADIUS = WGS84.radii.x; // [m]
 const J2 = 1.08262668e-3;                // Coefficiente zonale J2 (WGS84)
+const J4 = -2.37091222e-6;               // Coefficiente zonale J4 (ellissoide normale WGS84)
+
+// Polinomi di Legendre di grado 2 e 4 nel seno della latitudine
+// geocentrica "s".
+function legendre2(s) {
+    return (3 * s * s - 1) / 2;
+}
+
+function legendre4(s) {
+    const s2 = s * s;
+    return (35 * s2 * s2 - 30 * s2 + 3) / 8;
+}
 
 // Comune ai due modelli: la Terra ruota attorno all'asse Z (verso il
 // Polo Nord) con velocità angolare OMEGA [rad/s]. Sono gli stessi
@@ -201,27 +215,34 @@ const SPHERICAL_EARTH = {
 const ELLIPSOIDAL_EARTH = {
     rotationAxis: ROTATION_AXIS,
 
-    // Massa puntiforme corretta dal termine J2 (asse di simmetria Z):
-    //   ax,y = a_pm · [1 + 3/2·J2·(Re/r)²·(1 - 5·z²/r²)]
-    //   az   = a_pm · [1 + 3/2·J2·(Re/r)²·(3 - 5·z²/r²)]
+    // Massa puntiforme corretta dai termini J2 e J4 (asse di simmetria
+    // Z), con s = z/r e q = (Re/r)²:
+    //   ax,y = a_pm · [1 + 3/2·J2·q·(1 - 5s²) - 5/8·J4·q²·(3 - 42s² + 63s⁴)]
+    //   az   = a_pm · [1 + 3/2·J2·q·(3 - 5s²) - 5/8·J4·q²·(15 - 70s² + 63s⁴)]
+    // (gradiente di potential(), verificato dai test).
     gravity(position, result) {
         SPHERICAL_EARTH.gravity(position, result);
         const r2 = Cesium.Cartesian3.magnitudeSquared(position);
-        const k = 1.5 * J2 * (EQUATORIAL_RADIUS * EQUATORIAL_RADIUS) / r2;
-        const z2r2 = (position.z * position.z) / r2;
-        const horizontal = 1 + k * (1 - 5 * z2r2);
+        const q = (EQUATORIAL_RADIUS * EQUATORIAL_RADIUS) / r2;
+        const s2 = (position.z * position.z) / r2;
+        const s4 = s2 * s2;
+        const j2 = 1.5 * J2 * q;
+        const j4 = 0.625 * J4 * q * q;
+        const horizontal = 1 + j2 * (1 - 5 * s2) - j4 * (3 - 42 * s2 + 63 * s4);
         result.x *= horizontal;
         result.y *= horizontal;
-        result.z *= 1 + k * (3 - 5 * z2r2);
+        result.z *= 1 + j2 * (3 - 5 * s2) - j4 * (15 - 70 * s2 + 63 * s4);
         return result;
     },
 
-    // Potenziale con il termine J2: -GM/r · [1 - J2·(Re/r)²·(3·sin²φ - 1)/2].
+    // Potenziale con i termini J2 e J4:
+    //   -GM/r · [1 - J2·(Re/r)²·P2(s) - J4·(Re/r)⁴·P4(s)].
     potential(position) {
         const r = Cesium.Cartesian3.magnitude(position);
         const s = position.z / r;
+        const q = (EQUATORIAL_RADIUS / r) ** 2;
         return SPHERICAL_EARTH.potential(position) *
-            (1 - J2 * (EQUATORIAL_RADIUS / r) ** 2 * (3 * s * s - 1) / 2);
+            (1 - J2 * q * legendre2(s) - J4 * q * q * legendre4(s));
     },
 
     // Distanza dall'ellissoide WGS84 lungo la normale geodetica.
@@ -246,8 +267,8 @@ const ELLIPSOIDAL_EARTH = {
 
 // ---------------------------------------------------- src/model/arrow.js
 // ============================================================
-// arrow.js — Freccia: grandezza vettoriale applicata nel centro di
-// una particella (per esempio la velocità).
+// arrow.js — Freccia: grandezza vettoriale di una particella (per
+// esempio la velocità), disegnata nel centro della sua sfera.
 //
 // La grandezza è calcolata dallo stato corrente della particella con
 // la funzione "quantity(state, result)", che restituisce le componenti
@@ -259,9 +280,11 @@ const ELLIPSOIDAL_EARTH = {
 class Arrow {
     system; // "eci" o "ecef"
 
-    #state;    // Stato corrente della particella: { position, velocity } in ECI
+    #state;    // Stato corrente della particella (vedi Particle.state), in ECI
     #quantity; // (state, result) => componenti ECI della grandezza
 
+    // "state": stato corrente della particella, letto a ogni richiesta;
+    // "quantity": funzione che ne ricava la grandezza.
     constructor(system, state, quantity) {
         this.system = system;
         this.#state = state;
@@ -273,12 +296,12 @@ class Arrow {
         return this.#quantity(this.#state, result);
     }
 
-    // Punto di applicazione e vettore in coordinate ECEF all'istante
-    // "seconds" dello stato corrente (copie).
+    // Origine (centro della sfera della particella) e vettore in
+    // coordinate ECEF all'istante "seconds" dello stato corrente (copie).
     inEcef(seconds) {
         const angle = earthRotationAngle(seconds);
         return {
-            origin: eciToEcef(this.#state.position, angle),
+            origin: eciToEcef(this.#state.sphereCenter, angle),
             vector: eciToEcef(this.value(), angle)
         };
     }
@@ -426,18 +449,33 @@ class Trajectory {
 
 // ---------------------------------------------------- src/model/particle.js
 // ============================================================
-// particle.js — Modello di una particella: corpo sferico soggetto
+// particle.js — Modello di una particella: punto materiale soggetto
 // alla gravità che rimbalza elasticamente sulla Terra.
 //
+// Il baricentro della particella è il suo punto di contatto con la
+// superficie: la dinamica (posizione, velocità, quota, urti) riguarda
+// solo quel punto. La particella è disegnata come una sfera di raggio
+// "radius" appoggiata sul punto, con il centro lungo la verticale
+// locale del modello di Terra; frecce, terne e traiettorie sono
+// riferite al centro della sfera.
+//
+// Perché il punto di contatto e non il centro della sfera: una
+// particella ferma rispetto alla Terra resta ferma solo se il suo
+// baricentro si muove su una superficie equipotenziale della gravità
+// efficace. La superficie del modello di Terra lo è; la superficie
+// parallela a 125 km di quota, su cui starebbe il centro della sfera,
+// no (la verticale si incurva con la quota) e la particella
+// scivolerebbe verso l'equatore.
+//
 // Contiene ciò che appartiene alla singola particella:
-//   - raggio;
+//   - raggio della sfera disegnata;
 //   - condizioni iniziali (punto e quota di partenza, velocità) con le
 //     loro regole di validità;
 //   - stato iniziale e stato corrente, in ECI;
-//   - grandezze derivate (quota, energia);
+//   - grandezze derivate (quota, centro della sfera, energia);
 //   - frecce della velocità assoluta (ECI) e relativa (ECEF);
 //   - terne Est-Nord-Su nel punto di partenza (ECI ed ECEF);
-//   - traiettorie del centro (ECI ed ECEF).
+//   - traiettorie del centro della sfera (ECI ed ECEF).
 //
 // Ciò che è comune a tutte le particelle (modello di Terra, tempo,
 // integrazione) è in Simulation. Il modello di Terra viene passato ai
@@ -448,7 +486,7 @@ class Trajectory {
 // ============================================================
 
 
-const DEFAULT_PARTICLE_RADIUS = 125000; // [m]
+const DEFAULT_PARTICLE_RADIUS = 125000; // [m] raggio della sfera disegnata
 
 // Punto di partenza predefinito, usato finché il browser non fornisce
 // la posizione geografica del PC.
@@ -462,6 +500,8 @@ const VELOCITY_QUANTITIES = {
 };
 
 class Particle {
+    // Raggio della sfera con cui la particella è disegnata [m]: non
+    // entra nella dinamica.
     radius;
 
     // Condizioni iniziali.
@@ -469,7 +509,7 @@ class Particle {
         latitudeDeg: DEFAULT_START_POINT.latitudeDeg,   // [-90°, +90°]
         longitudeDeg: DEFAULT_START_POINT.longitudeDeg, // [0°, 360°)
         surfacePointECEF: new Cesium.Cartesian3(),
-        altitude: 0 // Quota del punto più basso della particella [m]
+        altitude: 0 // Quota del baricentro (punto di contatto) [m]
     };
 
     // Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
@@ -485,31 +525,37 @@ class Particle {
         absolute: { speedKmh: 0, azimuthDeg: 0, elevationDeg: 0 }
     };
 
-    // Stato iniziale (a t = 0 ECI ed ECEF coincidono).
+    // Stato iniziale del baricentro e centro iniziale della sfera
+    // (a t = 0 ECI ed ECEF coincidono).
     initial = {
         position: new Cesium.Cartesian3(),
         velocityECI: new Cesium.Cartesian3(),
-        velocityECEF: new Cesium.Cartesian3()
+        velocityECEF: new Cesium.Cartesian3(),
+        sphereCenter: new Cesium.Cartesian3()
     };
 
     // Stato corrente, in ECI.
     state = {
-        position: new Cesium.Cartesian3(),
-        velocity: new Cesium.Cartesian3(),
-        altitude: 0 // Quota del punto più basso della particella [m]
+        position: new Cesium.Cartesian3(),     // Baricentro
+        velocity: new Cesium.Cartesian3(),     // Velocità del baricentro
+        altitude: 0,                           // Quota del baricentro [m]
+        sphereCenter: new Cesium.Cartesian3()  // Centro della sfera disegnata
     };
 
-    // Velocità corrente del centro: assoluta (eci) e relativa (ecef).
+    // Velocità corrente: assoluta (eci) e relativa (ecef), disegnate
+    // nel centro della sfera.
     velocityArrows = bySystem((system) => new Arrow(system, this.state, VELOCITY_QUANTITIES[system]));
 
-    // Terne Est-Nord-Su con origine nel centro della particella a t = 0.
+    // Terne Est-Nord-Su con origine nel centro della sfera a t = 0.
     startFrames = bySystem((system) => new EnuFrame(system));
 
-    // Posizioni del centro dall'inizio della simulazione.
+    // Posizioni del centro della sfera dall'inizio della simulazione.
     trajectories = bySystem((system) => new Trajectory(system));
 
     #scratchEcef = new Cesium.Cartesian3();
+    #scratchNormal = new Cesium.Cartesian3();
 
+    // "radius": raggio della sfera disegnata [m].
     constructor(radius = DEFAULT_PARTICLE_RADIUS) {
         this.radius = radius;
         this.setStartPoint(DEFAULT_START_POINT.latitudeDeg, DEFAULT_START_POINT.longitudeDeg);
@@ -550,36 +596,52 @@ class Particle {
     // Calcola lo stato iniziale sul modello di Terra "earth", vi riporta
     // lo stato corrente e fa ripartire le traiettorie.
     reset(earth) {
-        this.#computeInitialPosition(earth);
-        Object.values(this.startFrames).forEach((frame) => frame.placeAt(this.initial.position));
+        const C3 = Cesium.Cartesian3;
+        const initial = this.initial;
+
+        // Baricentro alla quota di partenza, lungo la normale alla
+        // superficie del modello nel punto di partenza.
+        earth.pointAboveSurface(this.start.surfacePointECEF, this.start.altitude, initial.position);
+        C3.clone(initial.position, this.state.position);
+        this.updateDerivedState(earth);
+        C3.clone(this.state.sphereCenter, initial.sphereCenter);
+
+        Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter));
         this.#computeInitialVelocity();
-        Cesium.Cartesian3.clone(this.initial.position, this.state.position);
-        Cesium.Cartesian3.clone(this.initial.velocityECI, this.state.velocity);
-        this.updateAltitude(earth);
+        C3.clone(initial.velocityECI, this.state.velocity);
 
         Object.values(this.trajectories).forEach((trajectory) => trajectory.clear());
         this.recordTrajectory(0);
     }
 
-    // Aggiunge la posizione corrente (istante "seconds") alle traiettorie.
+    // Aggiunge il centro corrente della sfera (istante "seconds") alle
+    // traiettorie.
     recordTrajectory(seconds) {
-        const position = this.state.position;
-        this.trajectories.eci.addPoint(position);
-        this.trajectories.ecef.addPoint(eciToEcef(position, earthRotationAngle(seconds), this.#scratchEcef));
+        const center = this.state.sphereCenter;
+        this.trajectories.eci.addPoint(center);
+        this.trajectories.ecef.addPoint(eciToEcef(center, earthRotationAngle(seconds), this.#scratchEcef));
     }
 
-    // Distanza con segno del punto più basso della particella dalla
-    // superficie, lungo la normale (scritta in "normalResult");
-    // undefined se non definita.
+    // Distanza con segno del baricentro dalla superficie, lungo la
+    // normale (scritta in "normalResult"); undefined se non definita.
     clearance(earth, normalResult) {
-        const h = earth.heightAboveSurface(this.state.position, normalResult);
-        return Cesium.defined(h) ? h - this.radius : undefined;
+        return earth.heightAboveSurface(this.state.position, normalResult);
     }
 
-    // Aggiorna la quota dello stato corrente (0 se non definita).
-    updateAltitude(earth) {
-        const c = this.clearance(earth, new Cesium.Cartesian3());
-        this.state.altitude = Cesium.defined(c) ? c : 0;
+    // Aggiorna le grandezze derivate dalla posizione del baricentro:
+    // quota (0 se non definita) e centro della sfera, a un raggio dal
+    // baricentro lungo la verticale locale.
+    updateDerivedState(earth) {
+        const state = this.state;
+        const normal = this.#scratchNormal;
+        const h = this.clearance(earth, normal);
+        state.altitude = Cesium.defined(h) ? h : 0;
+        if (!Cesium.defined(h)) {
+            Cesium.Cartesian3.clone(state.position, state.sphereCenter);
+            return;
+        }
+        Cesium.Cartesian3.multiplyByScalar(normal, this.radius, state.sphereCenter);
+        Cesium.Cartesian3.add(state.position, state.sphereCenter, state.sphereCenter);
     }
 
     // Energia meccanica specifica nel sistema ECI [J/kg]: si conserva
@@ -589,20 +651,11 @@ class Particle {
             earth.potential(this.state.position);
     }
 
-    // Centro della particella a raggio + quota dalla superficie del
-    // modello, lungo la sua normale nel punto di partenza.
-    #computeInitialPosition(earth) {
-        earth.pointAboveSurface(
-            this.start.surfacePointECEF,
-            this.radius + this.start.altitude,
-            this.initial.position
-        );
-    }
-
     // A t = 0 le due terne di velocità sono legate da
     // v_ECI = v_ECEF + ω × r, con ω × r velocità di trascinamento nel
-    // centro della particella. La terna di riferimento (velocityMaster)
-    // determina l'altra. Richiede le terne già posizionate (placeAt).
+    // baricentro. La terna di riferimento (velocityMaster) determina
+    // l'altra. Richiede le terne già posizionate (placeAt): i loro assi
+    // Est, Nord, Su sono quelli del punto di partenza.
     #computeInitialVelocity() {
         const C3 = Cesium.Cartesian3;
         const frame = this.startFrames.ecef; // A t = 0 ECEF = ECI
@@ -702,7 +755,7 @@ class Simulation {
         }
 
         this.time = target;
-        this.particle.updateAltitude(this.earth);
+        this.particle.updateDerivedState(this.earth);
         this.particle.recordTrajectory(target);
     }
 
@@ -1534,7 +1587,7 @@ class PanelView {
 // Funzioni pure (nessun accesso al Viewer): la vista fornisce solo la
 // tangente del semiangolo del campo visivo lungo la larghezza.
 //
-// La telecamera guarda il centro della particella da una direzione fissa
+// La telecamera guarda il centro della sfera della particella da una direzione fissa
 // nella terna locale Est-Nord-Su del punto di partenza:
 //   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
 //   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
@@ -1610,7 +1663,7 @@ function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
     return cameraAt(far, new Cesium.Cartesian3());
 }
 
-// Posa { position, direction, up } che inquadra "target" (centro della
+// Posa { position, direction, up } che inquadra "target" (centro della sfera della
 // particella) dal punto di partenza "surfacePoint". Valida a t = 0, quando
 // ECI ed ECEF coincidono.
 function startPointFraming(surfacePoint, target, tanHalfFovWidth) {
@@ -2129,7 +2182,7 @@ class SceneView {
 
     // Inquadratura iniziale sul punto di partenza.
     #frameStartPoint() {
-        this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startParticlePosition);
+        this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startSphereCenter);
     }
 
     // Stato del ViewModel che non dipende dal tempo.
@@ -2170,7 +2223,7 @@ class SceneView {
         this.#viewer.entities.add({
             name: "Particella",
             position: new Cesium.CallbackProperty((time, result) => {
-                return Cesium.Cartesian3.clone(this.#frameAt(time).particlePositionEcef, result);
+                return Cesium.Cartesian3.clone(this.#frameAt(time).sphereCenterEcef, result);
             }, false),
             ellipsoid: {
                 radii: new Cesium.Cartesian3(r, r, r),
@@ -2476,9 +2529,9 @@ class SimulationViewModel extends Observable {
         return this.#particle.start.surfacePointECEF;
     }
 
-    // Centro della particella a t = 0 (ECI = ECEF).
-    get startParticlePosition() {
-        return this.#particle.initial.position;
+    // Centro della sfera della particella a t = 0 (ECI = ECEF).
+    get startSphereCenter() {
+        return this.#particle.initial.sphereCenter;
     }
 
     // Terna di velocità iniziale: "relative" (ECEF) o "absolute" (ECI).
@@ -2639,7 +2692,9 @@ class SimulationViewModel extends Observable {
         this.#frame = {
             seconds: seconds,
             earthAngle: angle,
+            // Baricentro della particella e centro della sfera disegnata.
             particlePositionEcef: particlePositionEcef,
+            sphereCenterEcef: eciToEcef(state.sphereCenter, angle),
             // Velocità assoluta (eci) e relativa (ecef): { origin, vector }.
             velocities: velocities,
             // Terne nel punto di partenza: { origin, axes: [E, N, U] }.

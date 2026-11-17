@@ -201,8 +201,9 @@ describe("stato a un istante", function () {
 
     it("a t = 0 la particella è sul punto di partenza e le due terne coincidono", function () {
         const frame = vm.frameAt(0);
-        // Terra sferica: il centro della particella è sulla verticale
-        // geocentrica, la sua latitudine geodetica differisce di ~0,004°.
+        // Terra sferica: il baricentro della particella è sulla
+        // verticale geocentrica, la sua latitudine geodetica può
+        // differire di qualche millesimo di grado.
         expect(frame.status.latitudeDeg).toBeCloseTo(45, 2);
         expect(frame.status.longitudeDeg).toBeCloseTo(7.1, 9);
         expect(frame.status.timeSeconds).toBe(0);

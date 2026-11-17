@@ -14,6 +14,7 @@ import {
     EQUATORIAL_RADIUS,
     GM,
     J2,
+    J4,
     SPHERICAL_EARTH
 } from "../src/model/earth.js";
 import { Simulation } from "../src/model/simulation.js";
@@ -39,15 +40,34 @@ describe("gravità", function () {
         expect(Cesium.Cartesian3.angleBetween(a, toCenter)).toBeLessThan(1e-12);
     });
 
-    it("Terra ellissoidale: J2 rinforza la gravità all'equatore e la indebolisce ai poli", function () {
+    it("Terra ellissoidale: J2 e J4 rinforzano la gravità all'equatore e la indeboliscono ai poli", function () {
         const r = EQUATORIAL_RADIUS;
         const pointMass = GM / (r * r);
 
         const equator = ELLIPSOIDAL_EARTH.gravity(new Cesium.Cartesian3(r, 0, 0), new Cesium.Cartesian3());
-        expect(-equator.x / pointMass).toBeCloseTo(1 + 1.5 * J2, 12);
+        expect(-equator.x / pointMass).toBeCloseTo(1 + 1.5 * J2 - 1.875 * J4, 12);
 
         const pole = ELLIPSOIDAL_EARTH.gravity(new Cesium.Cartesian3(0, 0, r), new Cesium.Cartesian3());
-        expect(-pole.z / pointMass).toBeCloseTo(1 - 3 * J2, 12);
+        expect(-pole.z / pointMass).toBeCloseTo(1 - 3 * J2 - 5 * J4, 12);
+    });
+
+    it.each([
+        ["sferica", SPHERICAL_EARTH],
+        ["ellissoidale", ELLIPSOIDAL_EARTH]
+    ])("Terra %s: la gravità è il gradiente del potenziale", function (name, earth) {
+        const C3 = Cesium.Cartesian3;
+        const h = 1; // [m] passo delle differenze finite
+        [new C3(4e6, 3e6, 4.5e6), new C3(6.4e6, 0, 0), new C3(0, 0, 6.36e6)].forEach((p) => {
+            const gradient = ["x", "y", "z"].map((axis) => {
+                const plus = C3.clone(p);
+                const minus = C3.clone(p);
+                plus[axis] += h;
+                minus[axis] -= h;
+                return -(earth.potential(plus) - earth.potential(minus)) / (2 * h);
+            });
+            const gravity = earth.gravity(p, new C3());
+            expect(C3.distance(gravity, new C3(...gradient)) / C3.magnitude(gravity)).toBeLessThan(1e-8);
+        });
     });
 
     it("i due modelli ruotano attorno all'asse Z con velocità angolare OMEGA", function () {
@@ -114,7 +134,7 @@ describe("simulazione", function () {
         const simulation = createSimulation({ latitude: 30 });
         simulation.useSphericalEarth = false;
         simulation.reset();
-        const expected = Cesium.Cartesian3.fromDegrees(7.1, 30, simulation.particle.radius + 225000);
+        const expected = Cesium.Cartesian3.fromDegrees(7.1, 30, 225000);
         expect(Cesium.Cartesian3.distance(simulation.particle.initial.position, expected)).toBeLessThan(1e-3);
     });
 });
@@ -136,7 +156,7 @@ describe("dinamica", function () {
         simulation.advanceTo(100);
         simulation.advanceTo(200);
         expect(trajectory.points).toHaveLength(3);
-        expect(Cesium.Cartesian3.equals(trajectory.points[2], simulation.particle.state.position)).toBe(true);
+        expect(Cesium.Cartesian3.equals(trajectory.points[2], simulation.particle.state.sphereCenter)).toBe(true);
     });
 
     it("tornare indietro nel tempo riparte dallo stato iniziale (Reset)", function () {
@@ -160,7 +180,7 @@ describe("dinamica", function () {
         }
         simulation.advanceTo(3000);
         // Differenza ammessa: errore di integrazione, molto minore
-        // del raggio della particella.
+        // delle distanze in gioco.
         expect(Cesium.Cartesian3.distance(oneStep, state.position)).toBeLessThan(10);
     });
 
@@ -217,9 +237,27 @@ describe("dinamica", function () {
         expect(latitudeAt(simulation, 7200)).toBeLessThan(43);
     });
 
-    it("ferma rispetto alla Terra su ellissoide con J2: deriva molto minore", function () {
+    it("ferma rispetto alla Terra su ellissoide con J2 e J4: deriva molto minore", function () {
         const simulation = createSimulation({ spherical: false });
         simulation.advanceTo(7200);
         expect(Math.abs(latitudeAt(simulation, 7200) - 45)).toBeLessThan(1);
     });
+
+    it.each([0, 30, 45, 60, 80])(
+        "ferma rispetto alla Terra sulla superficie dell'ellissoide (latitudine %d°): resta ferma",
+        function (latitude) {
+            // Baricentro sulla superficie WGS84, equipotenziale a meno
+            // dei termini oltre J4: dopo 2 ore lo spostamento è di pochi
+            // metri (senza J4 erano centinaia di metri, con il baricentro
+            // al centro della sfera decine di chilometri).
+            const simulation = createSimulation({ spherical: false, altitudeKm: 0, latitude });
+            const particle = simulation.particle;
+            for (let t = 60; t <= 7200; t += 60) {
+                simulation.advanceTo(t);
+            }
+            const end = eciToEcef(particle.state.position, OMEGA * 7200);
+            expect(Cesium.Cartesian3.distance(end, particle.initial.position)).toBeLessThan(10);
+            expect(Math.abs(particle.state.altitude)).toBeLessThan(1);
+        }
+    );
 });

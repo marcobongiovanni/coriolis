@@ -110,9 +110,9 @@ export class SimulationViewModel extends Observable {
         return this.#particle.start.surfacePointECEF;
     }
 
-    // Centro della particella a t = 0 (ECI = ECEF).
-    get startParticlePosition() {
-        return this.#particle.initial.position;
+    // Centro della sfera della particella a t = 0 (ECI = ECEF).
+    get startSphereCenter() {
+        return this.#particle.initial.sphereCenter;
     }
 
     // Terna di velocità iniziale: "relative" (ECEF) o "absolute" (ECI).
@@ -273,7 +273,9 @@ export class SimulationViewModel extends Observable {
         this.#frame = {
             seconds: seconds,
             earthAngle: angle,
+            // Baricentro della particella e centro della sfera disegnata.
             particlePositionEcef: particlePositionEcef,
+            sphereCenterEcef: eciToEcef(state.sphereCenter, angle),
             // Velocità assoluta (eci) e relativa (ecef): { origin, vector }.
             velocities: velocities,
             // Terne nel punto di partenza: { origin, axes: [E, N, U] }.

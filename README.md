@@ -30,11 +30,11 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 | Percorso | Livello | Contenuto |
 |---|---|---|
 | `src/geometry/referenceFrames.js` | condiviso | Funzioni pure: conversioni ECI/ECEF, rotazione e direzioni della terna Est-Nord-Su, angoli. |
-| `src/model/earth.js` | Model | Modelli di Terra (sfera, ellissoide WGS84 con J2): gravità, potenziale, superficie, asse di rotazione. |
-| `src/model/particle.js` | Model | `Particle`: raggio, condizioni iniziali e loro regole di validità, stato iniziale e corrente, frecce della velocità, terne e traiettorie. |
-| `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale applicata nel centro della particella (oggi la velocità assoluta e quella relativa). |
+| `src/model/earth.js` | Model | Modelli di Terra (sfera, ellissoide WGS84 con J2 e J4): gravità, potenziale, superficie, asse di rotazione. |
+| `src/model/particle.js` | Model | `Particle`: punto materiale (baricentro nel punto di contatto) disegnato come sfera; condizioni iniziali e loro regole di validità, stato iniziale e corrente, frecce della velocità, terne e traiettorie. |
+| `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta e quella relativa). |
 | `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma in ECI o in ECEF; conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
-| `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della particella, in ECI o in ECEF. |
+| `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della sfera della particella, in ECI o in ECEF. |
 | `src/model/simulation.js` | Model | `Simulation`: modello di Terra, tempo, integrazione e urti delle particelle. |
 | `src/services/interfaces.js` | servizi | Interfacce `SimulationClock` e `GeolocationService`. |
 | `src/services/cesiumClock.js`, `browserGeolocation.js` | servizi | Implementazioni con l'orologio di Cesium e la Geolocation API. |
@@ -182,7 +182,7 @@ Dipendenze consentite (ogni livello conosce solo quelli alla sua destra):
   iniziali, stato iniziale, coerenza tra velocità relativa e assoluta
   (`v_ECI = v_ECEF + ω × r`), frecce della velocità, terne nel punto di
   partenza, traiettorie;
-- `test/simulation.test.js`: gravità con e senza J2, superficie, asse
+- `test/simulation.test.js`: gravità con e senza J2 e J4, superficie, asse
   di rotazione, registrazione della traiettoria, conservazione
   dell'energia, rimbalzi, deriva su Terra sferica ed ellissoidale.
 

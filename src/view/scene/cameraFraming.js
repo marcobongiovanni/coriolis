@@ -5,7 +5,7 @@
 // Funzioni pure (nessun accesso al Viewer): la vista fornisce solo la
 // tangente del semiangolo del campo visivo lungo la larghezza.
 //
-// La telecamera guarda il centro della particella da una direzione fissa
+// La telecamera guarda il centro della sfera della particella da una direzione fissa
 // nella terna locale Est-Nord-Su del punto di partenza:
 //   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
 //   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
@@ -83,7 +83,7 @@ function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
     return cameraAt(far, new Cesium.Cartesian3());
 }
 
-// Posa { position, direction, up } che inquadra "target" (centro della
+// Posa { position, direction, up } che inquadra "target" (centro della sfera della
 // particella) dal punto di partenza "surfacePoint". Valida a t = 0, quando
 // ECI ed ECEF coincidono.
 export function startPointFraming(surfacePoint, target, tanHalfFovWidth) {

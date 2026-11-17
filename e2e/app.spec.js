@@ -144,8 +144,8 @@ async function expectEarthFramedOnStartPoint(page) {
         const toEnu = Cesium.Matrix4.inverseTransformation(enu, new Cesium.Matrix4());
         const normal = C3.fromCartesian4(Cesium.Matrix4.getColumn(enu, 2, new Cesium.Cartesian4()));
 
-        // Direzione particella -> telecamera, nella terna Est-Nord-Su.
-        const offset = C3.subtract(camera.positionWC, particle.state.position, new C3());
+        // Direzione centro della sfera -> telecamera, nella terna Est-Nord-Su.
+        const offset = C3.subtract(camera.positionWC, particle.state.sphereCenter, new C3());
         const local = Cesium.Matrix4.multiplyByPointAsVector(toEnu, offset, new C3());
         C3.normalize(local, local);
 

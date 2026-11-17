@@ -103,7 +103,7 @@ export class SceneView {
 
     // Inquadratura iniziale sul punto di partenza.
     #frameStartPoint() {
-        this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startParticlePosition);
+        this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startSphereCenter);
     }
 
     // Stato del ViewModel che non dipende dal tempo.
@@ -144,7 +144,7 @@ export class SceneView {
         this.#viewer.entities.add({
             name: "Particella",
             position: new Cesium.CallbackProperty((time, result) => {
-                return Cesium.Cartesian3.clone(this.#frameAt(time).particlePositionEcef, result);
+                return Cesium.Cartesian3.clone(this.#frameAt(time).sphereCenterEcef, result);
             }, false),
             ellipsoid: {
                 radii: new Cesium.Cartesian3(r, r, r),
