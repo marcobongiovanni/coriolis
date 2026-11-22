@@ -6,21 +6,20 @@
 
 // ---------------------------------------------------- src/geometry/referenceFrames.js
 // ============================================================
-// referenceFrames.js — Sistemi di riferimento ECI/ECEF e terna
-// locale Est-Nord-Su (ENU).
+// referenceFrames.js — Sistemi di riferimento e terna locale
+// Est-Nord-Su (ENU).
 //
 // Solo funzioni pure, senza stato: le usano il modello, il
-// ViewModel e la vista. Il tempo è in secondi simulati dall'inizio
-// (t = 0, quando ECI ed ECEF coincidono).
+// ViewModel e la vista. Le trasformazioni tra i sistemi ECI ed ECEF e
+// la rotazione terrestre sono nel modello (SceneNode, Earth,
+// RotationAxis).
 // ============================================================
 
 
-const OMEGA = 7.292115e-5; // Velocità angolare terrestre [rad/s]
-const KMH_PER_MS = 3.6;    // Conversione m/s -> km/h
+const KMH_PER_MS = 3.6; // Conversione m/s -> km/h
 
-// Asse di rotazione terrestre. Per definizione dei due sistemi coincide
-// con il loro asse Z comune: tutte le conversioni di questo file
-// ruotano attorno a Z.
+// Asse Z comune ai sistemi ECI ed ECEF (verso il Polo Nord): l'asse
+// attorno al quale ruota la Terra. Definisce l'Est della terna locale.
 const EARTH_ROTATION_AXIS = Cesium.Cartesian3.UNIT_Z;
 
 // Sistemi di riferimento, nell'ordine in cui compaiono nell'interfaccia.
@@ -31,53 +30,19 @@ function bySystem(create) {
     return Object.fromEntries(REFERENCE_SYSTEMS.map((system) => [system, create(system)]));
 }
 
-// Angolo di cui la Terra ha ruotato dopo "seconds" secondi simulati.
-function earthRotationAngle(seconds) {
-    return OMEGA * seconds;
-}
-
-// Rotazione attorno all'asse Z (comune a ECI ed ECEF) di "angle".
-// "result" può coincidere con "vector".
-function rotateAboutZ(vector, angle, result) {
-    const c = Math.cos(angle);
-    const s = Math.sin(angle);
-    const x = c * vector.x - s * vector.y;
-    const y = s * vector.x + c * vector.y;
-
-    result = result || new Cesium.Cartesian3();
-    result.x = x;
-    result.y = y;
-    result.z = vector.z;
-    return result;
-}
-
-// ECI -> ECEF: rotazione attorno all'asse Z di -angle.
-function eciToEcef(vector, angle, result) {
-    return rotateAboutZ(vector, -angle, result);
-}
-
-// ECEF -> ECI: rotazione attorno all'asse Z di +angle.
-function ecefToEci(vector, angle, result) {
-    return rotateAboutZ(vector, angle, result);
-}
-
-// Velocità di trascinamento ω × r di un punto solidale con la Terra
-// in "position", con ω = (0, 0, OMEGA).
-function dragVelocity(position, result) {
-    result = result || new Cesium.Cartesian3();
-    result.x = -OMEGA * position.y;
-    result.y = OMEGA * position.x;
-    result.z = 0;
-    return result;
+// Velocità di trascinamento ω × r di un punto in "position", solidale
+// con un sistema che ruota con velocità angolare "omega" (vettore).
+function dragVelocity(omega, position, result = new Cesium.Cartesian3()) {
+    return Cesium.Cartesian3.cross(omega, position, result);
 }
 
 const scratchDrag = new Cesium.Cartesian3();
 
-// Velocità relativa alla Terra: v - ω × r. "result" può coincidere
-// con "velocity".
-function relativeVelocity(position, velocity, result) {
-    const drag = dragVelocity(position, scratchDrag);
-    return Cesium.Cartesian3.subtract(velocity, drag, result || new Cesium.Cartesian3());
+// Velocità relativa al sistema rotante: v - ω × r. "result" può
+// coincidere con "velocity".
+function relativeVelocity(omega, position, velocity, result = new Cesium.Cartesian3()) {
+    const drag = dragVelocity(omega, position, scratchDrag);
+    return Cesium.Cartesian3.subtract(velocity, drag, result);
 }
 
 // Angolo in gradi ricondotto all'intervallo [0°, 360°). Gli angoli già
@@ -92,13 +57,29 @@ function normalizeDegrees(deg) {
 // TERNA LOCALE EST-NORD-SU
 // --------------------------------------------------
 
-const scratchEnuTransform = new Cesium.Matrix4();
+const scratchEast = new Cesium.Cartesian3();
+const scratchNorth = new Cesium.Cartesian3();
 
-// Rotazione dalla terna Est-Nord-Su del punto (normale geodetica
-// WGS84) alle coordinate cartesiane: le colonne sono Est, Nord, Su.
-function enuRotation(point, result) {
-    Cesium.Transforms.eastNorthUpToFixedFrame(point, Cesium.Ellipsoid.WGS84, scratchEnuTransform);
-    return Cesium.Matrix4.getMatrix3(scratchEnuTransform, result || new Cesium.Matrix3());
+// Rotazione dalla terna Est-Nord-Su alle coordinate cartesiane, data la
+// verticale "up" (versore, di norma la normale locale del modello di
+// Terra): le colonne sono Est, Nord, Su.
+//   Est  = Z × Su (orizzontale, verso cui ruota la Terra);
+//   Nord = Su × Est.
+// Ai poli (Su parallelo a Z) Est non è definito: si usa la stessa
+// convenzione di Cesium, Est = +Y.
+function enuRotation(up, result) {
+    const C3 = Cesium.Cartesian3;
+    const east = C3.cross(EARTH_ROTATION_AXIS, up, scratchEast);
+    if (C3.magnitudeSquared(east) === 0) {
+        C3.clone(C3.UNIT_Y, east);
+    }
+    C3.normalize(east, east);
+    const north = C3.cross(up, east, scratchNorth);
+
+    result = result || new Cesium.Matrix3();
+    Cesium.Matrix3.setColumn(result, 0, east, result);
+    Cesium.Matrix3.setColumn(result, 1, north, result);
+    return Cesium.Matrix3.setColumn(result, 2, up, result);
 }
 
 // Versore ENU di azimuth [°] (in senso orario dal Nord) ed elevazione
@@ -113,9 +94,352 @@ function directionEnu(azimuthDeg, elevationDeg) {
     );
 }
 
+// ---------------------------------------------------- src/model/cameraFraming.js
+// ============================================================
+// cameraFraming.js — Inquadratura iniziale: particella vista da
+// sud-sud-est con la Terra intera nella vista.
+//
+// Funzioni pure, usate da Camera: della vista serve solo la tangente
+// del semiangolo del campo visivo lungo la larghezza.
+//
+// La telecamera guarda il centro della sfera della particella da una
+// direzione fissa nella terna locale Est-Nord-Su del punto di partenza
+// (EnuFrame della particella):
+//   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
+//   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
+// Il vettore Up sta nel piano formato dalla direzione di vista e dalla
+// normale alla superficie (nessun rollio): la verticale locale appare
+// verticale sullo schermo.
+//
+// La distanza è quella per cui il disco terrestre occupa la frazione
+// EARTH_WIDTH_FRACTION della larghezza della vista.
+// ============================================================
+
+
+const CAMERA_AZIMUTH_DEG = 150;    // Dal Nord, in senso orario [°]
+const CAMERA_ELEVATION_DEG = 45;   // Sopra l'orizzonte locale [°]
+const EARTH_WIDTH_FRACTION = 0.95; // Larghezza della Terra / larghezza della vista
+
+// Frazione della larghezza della vista occupata dal diametro del disco
+// terrestre, visto da "position" lungo "direction" con il vettore "up"
+// (Infinity se la telecamera è troppo vicina).
+//
+// I bordi del disco sono dati dai due piani tangenti alla Terra che
+// contengono la retta per la telecamera parallela a Up: nel piano
+// (Destra, direzione) il centro della Terra sta all'angolo
+// a = atan2(x, z) e i piani tangenti a a ± asin(R / distanza).
+function earthWidthFraction(position, direction, up, tanHalfFovWidth) {
+    const C3 = Cesium.Cartesian3;
+    const right = C3.cross(direction, up, new C3());
+    const toCenter = C3.negate(position, new C3());
+    const x = C3.dot(toCenter, right);
+    const z = C3.dot(toCenter, direction);
+    const distance = Math.hypot(x, z);
+    const radius = Cesium.Ellipsoid.WGS84.maximumRadius;
+    if (distance <= radius) {
+        return Infinity;
+    }
+    const a = Math.atan2(x, z);
+    const b = Math.asin(radius / distance);
+    if (a + b >= Math.PI / 2 || a - b <= -Math.PI / 2) {
+        return Infinity;
+    }
+    return (Math.tan(a + b) - Math.tan(a - b)) / (2 * tanHalfFovWidth);
+}
+
+// Punto della semiretta target + d·offset (offset versore) alla distanza
+// d a cui la Terra occupa EARTH_WIDTH_FRACTION della larghezza
+// (bisezione: allontanandosi la Terra rimpicciolisce).
+function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
+    const candidate = new Cesium.Cartesian3();
+    // Posizione della telecamera a "distance" da target.
+    function cameraAt(distance, result) {
+        Cesium.Cartesian3.multiplyByScalar(offset, distance, result);
+        return Cesium.Cartesian3.add(target, result, result);
+    }
+    // Vero se a "distance" la Terra occupa più della frazione voluta.
+    function tooLarge(distance) {
+        const fraction = earthWidthFraction(cameraAt(distance, candidate), direction, up, tanHalfFovWidth);
+        return fraction > EARTH_WIDTH_FRACTION;
+    }
+
+    let near = 0;
+    let far = 1.0e7;
+    while (tooLarge(far)) {
+        far *= 2;
+    }
+    for (let i = 0; i < 50; i++) {
+        const mid = 0.5 * (near + far);
+        if (tooLarge(mid)) {
+            near = mid;
+        } else {
+            far = mid;
+        }
+    }
+    return cameraAt(far, new Cesium.Cartesian3());
+}
+
+// Posa { position, direction, up } che inquadra l'origine della terna
+// locale "frame" (EnuFrame con origine nel centro della sfera della
+// particella e asse Su lungo la normale locale), nel sistema del padre
+// della terna (World o Terra, con origine nel centro della Terra).
+function startPointFraming(frame, tanHalfFovWidth) {
+    const C3 = Cesium.Cartesian3;
+    const target = frame.position;
+    const normal = frame.axes[2];
+
+    // Versore dalla particella verso la telecamera.
+    const offset = frame.toCartesian(directionEnu(CAMERA_AZIMUTH_DEG, CAMERA_ELEVATION_DEG));
+    C3.normalize(offset, offset);
+    const direction = C3.negate(offset, new C3());
+
+    // Up: componente della normale ortogonale alla direzione di vista.
+    const up = C3.subtract(
+        normal,
+        C3.multiplyByScalar(direction, C3.dot(normal, direction), new C3()),
+        new C3()
+    );
+    C3.normalize(up, up);
+
+    return {
+        position: positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth),
+        direction: direction,
+        up: up
+    };
+}
+
+// ---------------------------------------------------- src/model/sceneNode.js
+// ============================================================
+// sceneNode.js — Nodo della gerarchia della scena.
+//
+// Ogni elemento del modello che corrisponde a un oggetto della scena
+// discende da SceneNode. I nodi formano un albero con relazioni
+// padre-figlio, costruito con addChild(); la radice è il nodo "World"
+// (parent nullo), il cui sistema di coordinate è ECI.
+//
+// POSA
+// Ogni nodo ha un proprio sistema di coordinate, la cui posa è espressa
+// in quello del padre:
+//   position     origine del sistema del nodo;
+//   orientation  assi X, Y, Z del sistema del nodo (colonne, versori).
+// Per difetto la posa è costante (identità: il sistema del nodo
+// coincide con quello del padre). Le sottoclassi la rendono variabile
+// nel tempo ridefinendo localPosition() o localOrientation(): la Terra
+// ruota attorno all'asse di rotazione, una freccia segue la particella.
+//
+// Tutto il codice relativo alla posa sta qui: le sottoclassi usano
+// positionIn()/axesIn() per esprimerla nel sistema di un altro nodo e
+// setPose()/setPoseFrom() per impostarla.
+// ============================================================
+
+
+const UNIT_AXES = [Cesium.Cartesian3.UNIT_X, Cesium.Cartesian3.UNIT_Y, Cesium.Cartesian3.UNIT_Z];
+
+class SceneNode {
+    parent = null; // Nodo padre (null finché non è aggiunto, e per la radice)
+    children = [];
+
+    // Posa nel sistema del padre (vedi intestazione).
+    position = new Cesium.Cartesian3();
+    orientation = Cesium.Matrix3.clone(Cesium.Matrix3.IDENTITY);
+
+    // --------------------------------------------------
+    // GERARCHIA
+    // --------------------------------------------------
+
+    // Aggiunge "child" ai figli, togliendolo dal padre precedente.
+    // Restituisce "child".
+    addChild(child) {
+        if (child.parent) {
+            child.parent.removeChild(child);
+        }
+        child.parent = this;
+        this.children.push(child);
+        return child;
+    }
+
+    // Toglie "child" dai figli.
+    removeChild(child) {
+        const index = this.children.indexOf(child);
+        if (index >= 0) {
+            this.children.splice(index, 1);
+            child.parent = null;
+        }
+    }
+
+    // --------------------------------------------------
+    // POSA NEL SISTEMA DEL PADRE
+    // --------------------------------------------------
+
+    // Assi X, Y, Z del nodo nel sistema del padre (copie).
+    get axes() {
+        return [0, 1, 2].map((i) => Cesium.Matrix3.getColumn(this.orientation, i, new Cesium.Cartesian3()));
+    }
+
+    // Imposta la posa: origine "position" e assi "axes" ([X, Y, Z],
+    // versori ortogonali), nel sistema del padre.
+    setPose(position, axes) {
+        Cesium.Cartesian3.clone(position, this.position);
+        axes.forEach((axis, i) => Cesium.Matrix3.setColumn(this.orientation, i, axis, this.orientation));
+    }
+
+    // Imposta la posa da origine e assi espressi nel sistema del nodo
+    // "node" all'istante "seconds". Senza padre, sono già nel sistema
+    // del padre.
+    setPoseFrom(node, position, axes, seconds) {
+        const parent = this.parent;
+        if (!parent) {
+            this.setPose(position, axes);
+            return;
+        }
+        this.setPose(
+            node.pointTo(parent, seconds, position),
+            axes.map((axis) => node.vectorTo(parent, seconds, axis))
+        );
+    }
+
+    // Origine del nodo nel sistema del padre all'istante "seconds" [s
+    // simulati]. Costante per difetto.
+    localPosition(seconds, result = new Cesium.Cartesian3()) {
+        return Cesium.Cartesian3.clone(this.position, result);
+    }
+
+    // Assi del nodo nel sistema del padre all'istante "seconds".
+    // Costanti per difetto.
+    localOrientation(seconds, result = new Cesium.Matrix3()) {
+        return Cesium.Matrix3.clone(this.orientation, result);
+    }
+
+    // Matrice dalle coordinate del nodo a quelle del padre all'istante
+    // "seconds".
+    localTransform(seconds, result = new Cesium.Matrix4()) {
+        return Cesium.Matrix4.fromRotationTranslation(
+            this.localOrientation(seconds), this.localPosition(seconds), result
+        );
+    }
+
+    // --------------------------------------------------
+    // TRASFORMAZIONI TRA I SISTEMI DEI NODI
+    // --------------------------------------------------
+
+    // Matrice dalle coordinate del nodo a quelle della radice.
+    worldTransform(seconds, result = new Cesium.Matrix4()) {
+        const local = new Cesium.Matrix4();
+        this.localTransform(seconds, result);
+        for (let node = this.parent; node; node = node.parent) {
+            Cesium.Matrix4.multiplyTransformation(node.localTransform(seconds, local), result, result);
+        }
+        return result;
+    }
+
+    // Matrice dalle coordinate del nodo a quelle del nodo "target"
+    // (della stessa gerarchia) all'istante "seconds".
+    transformTo(target, seconds, result = new Cesium.Matrix4()) {
+        const toWorld = this.worldTransform(seconds, result);
+        const fromWorld = Cesium.Matrix4.inverseTransformation(
+            target.worldTransform(seconds), new Cesium.Matrix4()
+        );
+        return Cesium.Matrix4.multiplyTransformation(fromWorld, toWorld, result);
+    }
+
+    // Punto "point" (coordinate del nodo) nelle coordinate di "target".
+    pointTo(target, seconds, point, result = new Cesium.Cartesian3()) {
+        return Cesium.Matrix4.multiplyByPoint(this.transformTo(target, seconds), point, result);
+    }
+
+    // Vettore "vector" (coordinate del nodo) nelle coordinate di
+    // "target": solo rotazione, senza traslazione.
+    vectorTo(target, seconds, vector, result = new Cesium.Cartesian3()) {
+        return Cesium.Matrix4.multiplyByPointAsVector(this.transformTo(target, seconds), vector, result);
+    }
+
+    // Origine del nodo nelle coordinate di "target" all'istante
+    // "seconds".
+    positionIn(target, seconds, result = new Cesium.Cartesian3()) {
+        return this.pointTo(target, seconds, Cesium.Cartesian3.ZERO, result);
+    }
+
+    // Assi X, Y, Z del nodo nelle coordinate di "target" all'istante
+    // "seconds" (copie).
+    axesIn(target, seconds) {
+        return UNIT_AXES.map((axis) => this.vectorTo(target, seconds, axis));
+    }
+
+    // Posa { position, axes } del nodo nelle coordinate di "target"
+    // all'istante "seconds" (copie).
+    poseIn(target, seconds) {
+        return { position: this.positionIn(target, seconds), axes: this.axesIn(target, seconds) };
+    }
+}
+
+// ---------------------------------------------------- src/model/camera.js
+// ============================================================
+// camera.js — Telecamera: punto di vista sulla scena.
+//
+// È un nodo della scena il cui sistema è quello della telecamera:
+//   origine  posizione della telecamera;
+//   asse X   direzione di vista;
+//   asse Y   Up;
+//   asse Z   destra (X × Y).
+// La posa è costante nel sistema del padre:
+//   figlia di World (Telecamera ECI): ferma nello spazio inerziale (la
+//     Terra ruota sullo schermo);
+//   figlia della Terra (Telecamera ECEF): solidale con la Terra (la
+//     Terra appare immobile).
+// expressedIn() la restituisce nelle coordinate di un altro nodo (per
+// esempio la Terra, il sistema in cui Cesium disegna).
+// ============================================================
+
+
+class Camera extends SceneNode {
+    // Diventa vero quando l'utente sposta la telecamera: da quel
+    // momento l'inquadratura automatica non la tocca più.
+    movedByUser = false;
+
+    // Direzione di vista nel sistema del padre (versore, copia).
+    get direction() {
+        return this.axes[0];
+    }
+
+    // Up nel sistema del padre (versore, copia).
+    get up() {
+        return this.axes[1];
+    }
+
+    // Posa { position, direction, up } nelle coordinate del nodo "node"
+    // all'istante "seconds" (copie).
+    expressedIn(node, seconds) {
+        const { position, axes: [direction, up] } = this.poseIn(node, seconds);
+        return { position: position, direction: direction, up: up };
+    }
+
+    // Imposta la posa da una posa { position, direction, up } espressa
+    // nelle coordinate del nodo "node" all'istante "seconds". Up viene
+    // reso ortogonale alla direzione.
+    setFrom(node, pose, seconds) {
+        const C3 = Cesium.Cartesian3;
+        const direction = C3.normalize(pose.direction, new C3());
+        const right = C3.normalize(C3.cross(direction, pose.up, new C3()), new C3());
+        const up = C3.cross(right, direction, new C3());
+        this.setPoseFrom(node, pose.position, [direction, up, right], seconds);
+    }
+
+    // Inquadratura iniziale (vedi cameraFraming.js): l'origine della
+    // terna locale "frame" (centro della sfera della particella) vista
+    // da una direzione fissa nella terna, a t = 0.
+    frameStartPoint(frame, tanHalfFovWidth) {
+        this.setFrom(frame.parent, startPointFraming(frame, tanHalfFovWidth), 0);
+    }
+}
+
 // ---------------------------------------------------- src/model/earth.js
 // ============================================================
-// earth.js — Modelli di Terra usati da gravità e urti.
+// earth.js — Terra: nodo della scena e modelli di Terra usati da
+// gravità e urti.
+//
+// Earth è il nodo della scena "Terra", figlio di World: il suo sistema
+// di coordinate è ECEF, che ruota rispetto a World (ECI) attorno
+// all'asse di rotazione. Contiene il modello di Terra attivo.
 //
 // Ogni modello è una strategia con la stessa forma:
 //   gravity(position, result)            accelerazione [m/s²]
@@ -125,10 +449,9 @@ function directionEnu(azimuthDeg, elevationDeg) {
 //       undefined se non definita
 //   pointAboveSurface(surfacePoint, height, result)
 //       punto a "height" metri sopra "surfacePoint", lungo la normale
-//   rotationAxis                         asse di rotazione terrestre
 //
-// La simulazione sceglie il modello e non contiene "if" sul tipo di
-// Terra.
+// La Terra sceglie il modello e la simulazione non contiene "if" sul
+// tipo di Terra.
 //
 // TERRA SFERICA
 // - Gravità: legge di gravitazione universale, a = -GM·r/|r|³.
@@ -169,21 +492,10 @@ function legendre4(s) {
     return (35 * s2 * s2 - 30 * s2 + 3) / 8;
 }
 
-// Comune ai due modelli: la Terra ruota attorno all'asse Z (verso il
-// Polo Nord) con velocità angolare OMEGA [rad/s]. Sono gli stessi
-// valori su cui sono definiti i sistemi ECI ed ECEF in
-// referenceFrames.js, così scena e conversioni non possono divergere.
-const ROTATION_AXIS = Object.freeze({
-    direction: EARTH_ROTATION_AXIS,
-    angularVelocity: OMEGA
-});
-
 const scratchSurfacePoint = new Cesium.Cartesian3();
 const scratchSurfaceOffset = new Cesium.Cartesian3();
 
 const SPHERICAL_EARTH = {
-    rotationAxis: ROTATION_AXIS,
-
     // Massa puntiforme: a = -GM·r/|r|³.
     gravity(position, result) {
         const r2 = Cesium.Cartesian3.magnitudeSquared(position);
@@ -213,8 +525,6 @@ const SPHERICAL_EARTH = {
 };
 
 const ELLIPSOIDAL_EARTH = {
-    rotationAxis: ROTATION_AXIS,
-
     // Massa puntiforme corretta dai termini J2 e J4 (asse di simmetria
     // Z), con s = z/r e q = (Re/r)²:
     //   ax,y = a_pm · [1 + 3/2·J2·q·(1 - 5s²) - 5/8·J4·q²·(3 - 42s² + 63s⁴)]
@@ -265,44 +575,84 @@ const ELLIPSOIDAL_EARTH = {
     }
 };
 
+const scratchRotation = new Cesium.Quaternion();
+
+// Nodo della scena "Terra" (sistema ECEF).
+class Earth extends SceneNode {
+    // Modello di Terra attivo: sfera (true) o ellissoide WGS84 con J2 e
+    // J4 (false).
+    spherical = true;
+
+    #rotationAxis; // RotationAxis, fratello della Terra sotto World
+
+    // "rotationAxis": asse attorno al quale ruota.
+    constructor(rotationAxis) {
+        super();
+        this.#rotationAxis = rotationAxis;
+    }
+
+    // Modello di Terra attivo (SPHERICAL_EARTH o ELLIPSOIDAL_EARTH).
+    get model() {
+        return this.spherical ? SPHERICAL_EARTH : ELLIPSOIDAL_EARTH;
+    }
+
+    // Assi ECEF nel sistema di World (il padre): ruotati dell'angolo di
+    // cui la Terra ha ruotato attorno all'asse. L'origine resta nel
+    // centro della Terra.
+    localOrientation(seconds, result = new Cesium.Matrix3()) {
+        const axis = this.#rotationAxis;
+        Cesium.Quaternion.fromAxisAngle(axis.direction, axis.angle(seconds), scratchRotation);
+        return Cesium.Matrix3.fromQuaternion(scratchRotation, result);
+    }
+}
+
 // ---------------------------------------------------- src/model/arrow.js
 // ============================================================
 // arrow.js — Freccia: grandezza vettoriale di una particella (per
 // esempio la velocità), disegnata nel centro della sua sfera.
 //
-// La grandezza è calcolata dallo stato corrente della particella con
-// la funzione "quantity(state, result)", che restituisce le componenti
-// in coordinate ECI. "system" indica rispetto a quale sistema è
-// misurata la grandezza: "eci" (spazio inerziale) o "ecef" (Terra).
+// È un nodo della scena: il padre stabilisce rispetto a quale sistema
+// è misurata la grandezza (World: spazio inerziale, Terra: ECEF).
+// L'origine del nodo segue il centro della sfera della particella; gli
+// assi sono quelli del padre. La grandezza è calcolata dallo stato
+// corrente della particella con la funzione "quantity(state, result)",
+// che restituisce le componenti nelle coordinate della particella (ECI).
 // ============================================================
 
 
-class Arrow {
-    system; // "eci" o "ecef"
+class Arrow extends SceneNode {
+    #particle; // Particella di cui la freccia rappresenta la grandezza
+    #quantity; // (state, result) => componenti nelle coordinate della particella
 
-    #state;    // Stato corrente della particella (vedi Particle.state), in ECI
-    #quantity; // (state, result) => componenti ECI della grandezza
-
-    // "state": stato corrente della particella, letto a ogni richiesta;
-    // "quantity": funzione che ne ricava la grandezza.
-    constructor(system, state, quantity) {
-        this.system = system;
-        this.#state = state;
+    // "particle": particella, letta a ogni richiesta; "quantity":
+    // funzione che ne ricava la grandezza.
+    constructor(particle, quantity) {
+        super();
+        this.#particle = particle;
         this.#quantity = quantity;
     }
 
-    // Componenti in coordinate ECI.
-    value(result = new Cesium.Cartesian3()) {
-        return this.#quantity(this.#state, result);
+    // Origine nel sistema del padre: centro della sfera della particella
+    // nello stato corrente.
+    localPosition(seconds, result = new Cesium.Cartesian3()) {
+        const particle = this.#particle;
+        return particle.pointTo(this.parent, seconds, particle.state.sphereCenter, result);
     }
 
-    // Origine (centro della sfera della particella) e vettore in
-    // coordinate ECEF all'istante "seconds" dello stato corrente (copie).
-    inEcef(seconds) {
-        const angle = earthRotationAngle(seconds);
+    // Componenti nelle coordinate della freccia, all'istante "seconds"
+    // dello stato corrente della particella.
+    value(seconds, result = new Cesium.Cartesian3()) {
+        const particle = this.#particle;
+        this.#quantity(particle.state, result);
+        return particle.vectorTo(this, seconds, result, result);
+    }
+
+    // Origine e vettore nelle coordinate del nodo "node" all'istante
+    // "seconds" (copie).
+    expressedIn(node, seconds) {
         return {
-            origin: eciToEcef(this.#state.sphereCenter, angle),
-            vector: eciToEcef(this.value(), angle)
+            position: this.positionIn(node, seconds),
+            vector: this.vectorTo(node, seconds, this.value(seconds))
         };
     }
 }
@@ -310,65 +660,54 @@ class Arrow {
 // ---------------------------------------------------- src/model/enuFrame.js
 // ============================================================
 // enuFrame.js — Terna Est-Nord-Su con origine in un punto.
+// L'asse Su è la normale locale del modello di Terra: radiale per la
+// Terra sferica, geodetica per quella ellissoidale.
 //
-// A t = 0 i sistemi ECI ed ECEF coincidono, quindi origine e assi sono
-// gli stessi in entrambi. Poi la terna:
-//   "ecef": resta solidale con la Terra (ferma in ECEF);
-//   "eci":  resta ferma nello spazio inerziale (ferma in ECI) e, vista
-//           dalla Terra, ruota all'indietro dell'angolo di rotazione
-//           terrestre.
+// È un nodo della scena il cui sistema è la terna stessa: origine e
+// assi Est, Nord, Su sono la posa del nodo, costante nel sistema del
+// padre. Quindi la terna:
+//   figlia di World (terna locale assoluta): resta ferma nello spazio
+//     inerziale e, vista dalla Terra, ruota all'indietro dell'angolo di
+//     rotazione terrestre;
+//   figlia della Terra (terna locale relativa): resta solidale con la
+//     Terra.
 //
 // toCartesian/toLocal convertono un vettore tra componenti nella terna
-// e coordinate cartesiane del sistema della terna; i metodi statici
+// e coordinate cartesiane del sistema del padre; i metodi statici
 // convertono una velocità tra componenti nella terna e
 // modulo/azimuth/elevazione.
 // ============================================================
 
 
-class EnuFrame {
-    system; // "eci" o "ecef"
+class EnuFrame extends SceneNode {
+    #scratchTranspose = new Cesium.Matrix3();
 
-    // Nel sistema della terna (costanti dopo placeAt).
-    origin = new Cesium.Cartesian3();
-    axes = [new Cesium.Cartesian3(), new Cesium.Cartesian3(), new Cesium.Cartesian3()]; // E, N, U
-
-    #rotation = new Cesium.Matrix3();
-
-    constructor(system) {
-        this.system = system;
+    // Porta l'origine in "origin" e orienta gli assi verso Est, Nord e
+    // Su, con Su lungo il versore "up" (la normale locale del modello di
+    // Terra nel punto). "origin" e "up" sono nelle coordinate del nodo
+    // "source" all'istante "seconds" (senza "source": già nel sistema
+    // del padre).
+    placeAt(origin, up, source, seconds = 0) {
+        const enu = enuRotation(up);
+        const axes = [0, 1, 2].map((i) => Cesium.Matrix3.getColumn(enu, i, new Cesium.Cartesian3()));
+        if (source) {
+            this.setPoseFrom(source, origin, axes, seconds);
+        } else {
+            this.setPose(origin, axes);
+        }
     }
 
-    // Porta l'origine in "origin" (a t = 0) e orienta gli assi verso
-    // Est, Nord e Su in quel punto.
-    placeAt(origin) {
-        Cesium.Cartesian3.clone(origin, this.origin);
-        enuRotation(origin, this.#rotation);
-        this.axes.forEach((axis, i) => Cesium.Matrix3.getColumn(this.#rotation, i, axis));
-    }
-
-    // Origine e assi in coordinate ECEF all'istante "seconds" (copie).
-    inEcef(seconds) {
-        const angle = this.system === "eci" ? earthRotationAngle(seconds) : 0;
-        return {
-            origin: eciToEcef(this.origin, angle),
-            axes: this.axes.map((axis) => eciToEcef(axis, angle))
-        };
-    }
-
-    // Componenti E, N, U di un vettore -> coordinate cartesiane.
+    // Componenti E, N, U di un vettore -> coordinate cartesiane nel
+    // sistema del padre.
     toCartesian(local, result = new Cesium.Cartesian3()) {
-        return Cesium.Matrix3.multiplyByVector(this.#rotation, local, result);
+        return Cesium.Matrix3.multiplyByVector(this.orientation, local, result);
     }
 
-    // Coordinate cartesiane di un vettore -> componenti E, N, U.
+    // Coordinate cartesiane di un vettore nel sistema del padre ->
+    // componenti E, N, U.
     toLocal(vector, result = new Cesium.Cartesian3()) {
-        const [east, north, up] = this.axes;
-        return Cesium.Cartesian3.fromElements(
-            Cesium.Cartesian3.dot(vector, east),
-            Cesium.Cartesian3.dot(vector, north),
-            Cesium.Cartesian3.dot(vector, up),
-            result
-        );
+        const transpose = Cesium.Matrix3.transpose(this.orientation, this.#scratchTranspose);
+        return Cesium.Matrix3.multiplyByVector(transpose, vector, result);
     }
 
     // --------------------------------------------------
@@ -402,23 +741,45 @@ class EnuFrame {
     }
 }
 
+// ---------------------------------------------------- src/model/startPoint.js
+// ============================================================
+// startPoint.js — Punto di partenza della particella, figlio della
+// Terra: punto della superficie WGS84 sotto la particella a t = 0, dato
+// da latitudine e longitudine geodetiche (condizioni iniziali, validate
+// da Particle.setStartPoint). È l'origine del nodo (position,
+// coordinate ECEF).
+// ============================================================
+
+
+class StartPoint extends SceneNode {
+    latitudeDeg = 0;  // [-90°, +90°]
+    longitudeDeg = 0; // [0°, 360°)
+
+    // Porta il punto a latitudine e longitudine geodetiche [°].
+    setGeographic(latitudeDeg, longitudeDeg) {
+        this.latitudeDeg = latitudeDeg;
+        this.longitudeDeg = longitudeDeg;
+        Cesium.Cartesian3.fromDegrees(longitudeDeg, latitudeDeg, 0, Cesium.Ellipsoid.WGS84, this.position);
+    }
+}
+
 // ---------------------------------------------------- src/model/trajectory.js
 // ============================================================
-// trajectory.js — Traiettoria del centro di una particella.
+// trajectory.js — Traiettoria del centro della sfera di una particella.
 //
-// Sequenza delle posizioni registrate a ogni istante raggiunto dalla
-// simulazione, nel sistema di riferimento della traiettoria:
-//   "eci":  ferma nello spazio inerziale;
-//   "ecef": solidale con la Terra.
+// È un nodo della scena: sequenza delle posizioni registrate a ogni
+// istante raggiunto dalla simulazione, nelle coordinate del nodo, che
+// coincidono con quelle del padre:
+//   figlia di World (traiettoria assoluta): ferma nello spazio inerziale;
+//   figlia della Terra (traiettoria relativa): solidale con la Terra.
 // ============================================================
 
 
 const TRAJECTORY_MIN_DISTANCE = 10; // [m] evita vertici coincidenti
 
-class Trajectory {
-    system; // "eci" o "ecef"
-
-    // Posizioni registrate (Cartesian3), in ordine di tempo.
+class Trajectory extends SceneNode {
+    // Posizioni registrate (Cartesian3, nelle coordinate del nodo), in
+    // ordine di tempo.
     points = [];
 
     // Cresce a ogni clear(): chi disegna la traiettoria capisce che
@@ -426,12 +787,8 @@ class Trajectory {
     // nuovi punti.
     revision = 0;
 
-    constructor(system) {
-        this.system = system;
-    }
-
-    // Aggiunge una copia di "position", se dista almeno
-    // TRAJECTORY_MIN_DISTANCE dall'ultimo punto.
+    // Aggiunge una copia di "position" (coordinate del nodo), se dista
+    // almeno TRAJECTORY_MIN_DISTANCE dall'ultimo punto.
     addPoint(position) {
         const last = this.points[this.points.length - 1];
         if (last && Cesium.Cartesian3.distance(last, position) < TRAJECTORY_MIN_DISTANCE) {
@@ -467,15 +824,23 @@ class Trajectory {
 // no (la verticale si incurva con la quota) e la particella
 // scivolerebbe verso l'equatore.
 //
+// È un nodo della scena, figlio di World (vedi Simulation): le sue
+// coordinate sono ECI.
+//
 // Contiene ciò che appartiene alla singola particella:
 //   - raggio della sfera disegnata;
 //   - condizioni iniziali (punto e quota di partenza, velocità) con le
 //     loro regole di validità;
 //   - stato iniziale e stato corrente, in ECI;
 //   - grandezze derivate (quota, centro della sfera, energia);
-//   - frecce della velocità assoluta (ECI) e relativa (ECEF);
-//   - terne Est-Nord-Su nel punto di partenza (ECI ed ECEF);
-//   - traiettorie del centro della sfera (ECI ed ECEF).
+//   - frecce della velocità assoluta e relativa;
+//   - terne locali assoluta e relativa nel punto di partenza;
+//   - traiettorie assoluta e relativa del centro della sfera;
+//   - punto di partenza.
+// Frecce, terne, traiettorie e punto di partenza sono nodi della scena
+// che Simulation appende a World (assoluti, chiave "eci") o alla Terra
+// (relativi, chiave "ecef"), non alla particella: la particella li
+// conserva come riferimenti.
 //
 // Ciò che è comune a tutte le particelle (modello di Terra, tempo,
 // integrazione) è in Simulation. Il modello di Terra viene passato ai
@@ -492,46 +857,34 @@ const DEFAULT_PARTICLE_RADIUS = 125000; // [m] raggio della sfera disegnata
 // la posizione geografica del PC.
 const DEFAULT_START_POINT = { latitudeDeg: 45.0, longitudeDeg: 7.1 };
 
-// Grandezze rappresentate dalle frecce della velocità, in coordinate
-// ECI: assoluta (eci), v, e relativa alla Terra (ecef), v - ω × r.
-const VELOCITY_QUANTITIES = {
-    eci: (state, result) => Cesium.Cartesian3.clone(state.velocity, result),
-    ecef: (state, result) => relativeVelocity(state.position, state.velocity, result)
-};
-
-class Particle {
+class Particle extends SceneNode {
     // Raggio della sfera con cui la particella è disegnata [m]: non
     // entra nella dinamica.
     radius;
 
-    // Condizioni iniziali.
+    // Condizioni iniziali: il punto di partenza (latitudine e
+    // longitudine) è il nodo startPoint.
     start = {
-        latitudeDeg: DEFAULT_START_POINT.latitudeDeg,   // [-90°, +90°]
-        longitudeDeg: DEFAULT_START_POINT.longitudeDeg, // [0°, 360°)
-        surfacePointECEF: new Cesium.Cartesian3(),
         altitude: 0 // Quota del baricentro (punto di contatto) [m]
     };
 
     // Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
     // partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
-    //   "relative": rispetto alla Terra (ECEF);
-    //   "absolute": rispetto allo spazio inerziale (ECI).
+    //   "eci":  velocità assoluta, rispetto allo spazio inerziale;
+    //   "ecef": velocità relativa, rispetto alla Terra.
     // L'ultima terna modificata è quella "di riferimento"
     // (velocityMaster): l'altra viene ricalcolata da questa.
-    velocityMaster = "relative";
+    velocityMaster = "ecef";
 
-    velocity = {
-        relative: { speedKmh: 0, azimuthDeg: 0, elevationDeg: 0 },
-        absolute: { speedKmh: 0, azimuthDeg: 0, elevationDeg: 0 }
-    };
+    velocity = bySystem(() => ({ speedKmh: 0, azimuthDeg: 0, elevationDeg: 0 }));
 
     // Stato iniziale del baricentro e centro iniziale della sfera
     // (a t = 0 ECI ed ECEF coincidono).
     initial = {
         position: new Cesium.Cartesian3(),
-        velocityECI: new Cesium.Cartesian3(),
-        velocityECEF: new Cesium.Cartesian3(),
-        sphereCenter: new Cesium.Cartesian3()
+        velocity: bySystem(() => new Cesium.Cartesian3()), // Assoluta (eci) e relativa (ecef), in ECI
+        sphereCenter: new Cesium.Cartesian3(),
+        normal: new Cesium.Cartesian3() // Normale locale nel punto di partenza
     };
 
     // Stato corrente, in ECI.
@@ -544,20 +897,39 @@ class Particle {
 
     // Velocità corrente: assoluta (eci) e relativa (ecef), disegnate
     // nel centro della sfera.
-    velocityArrows = bySystem((system) => new Arrow(system, this.state, VELOCITY_QUANTITIES[system]));
+    velocityArrows;
 
-    // Terne Est-Nord-Su con origine nel centro della sfera a t = 0.
-    startFrames = bySystem((system) => new EnuFrame(system));
+    // Terne locali assoluta (eci) e relativa (ecef), con origine nel
+    // centro della sfera a t = 0.
+    startFrames;
 
-    // Posizioni del centro della sfera dall'inizio della simulazione.
-    trajectories = bySystem((system) => new Trajectory(system));
+    // Traiettorie assoluta (eci) e relativa (ecef): posizioni del centro
+    // della sfera dall'inizio della simulazione.
+    trajectories;
 
-    #scratchEcef = new Cesium.Cartesian3();
+    // Punto di partenza sulla superficie (figlio della Terra).
+    startPoint;
+
+    #rotationAxis; // Asse di rotazione terrestre (velocità di trascinamento)
+    #scratchPoint = new Cesium.Cartesian3();
     #scratchNormal = new Cesium.Cartesian3();
 
+    // "rotationAxis": asse di rotazione terrestre (RotationAxis);
     // "radius": raggio della sfera disegnata [m].
-    constructor(radius = DEFAULT_PARTICLE_RADIUS) {
+    constructor(rotationAxis, radius = DEFAULT_PARTICLE_RADIUS) {
+        super();
+        this.#rotationAxis = rotationAxis;
         this.radius = radius;
+        // Grandezze delle frecce, in coordinate ECI: velocità assoluta v
+        // e relativa alla Terra v - ω × r.
+        const quantities = {
+            eci: (state, result) => Cesium.Cartesian3.clone(state.velocity, result),
+            ecef: (state, result) => rotationAxis.relativeVelocity(state.position, state.velocity, result)
+        };
+        this.velocityArrows = bySystem((system) => new Arrow(this, quantities[system]));
+        this.startFrames = bySystem(() => new EnuFrame());
+        this.trajectories = bySystem(() => new Trajectory());
+        this.startPoint = new StartPoint();
         this.setStartPoint(DEFAULT_START_POINT.latitudeDeg, DEFAULT_START_POINT.longitudeDeg);
     }
 
@@ -567,10 +939,7 @@ class Particle {
 
     // Latitudine limitata a [-90°, +90°], longitudine ricondotta a [0°, 360°).
     setStartPoint(latitudeDeg, longitudeDeg) {
-        const start = this.start;
-        start.latitudeDeg = Cesium.Math.clamp(latitudeDeg, -90, 90);
-        start.longitudeDeg = normalizeDegrees(longitudeDeg);
-        start.surfacePointECEF = Cesium.Cartesian3.fromDegrees(start.longitudeDeg, start.latitudeDeg, 0);
+        this.startPoint.setGeographic(Cesium.Math.clamp(latitudeDeg, -90, 90), normalizeDegrees(longitudeDeg));
     }
 
     // Quota non negativa [m].
@@ -600,26 +969,31 @@ class Particle {
         const initial = this.initial;
 
         // Baricentro alla quota di partenza, lungo la normale alla
-        // superficie del modello nel punto di partenza.
-        earth.pointAboveSurface(this.start.surfacePointECEF, this.start.altitude, initial.position);
+        // superficie del modello nel punto di partenza (portato nelle
+        // coordinate della particella a t = 0).
+        const surfacePoint = this.startPoint.positionIn(this, 0, this.#scratchPoint);
+        earth.pointAboveSurface(surfacePoint, this.start.altitude, initial.position);
         C3.clone(initial.position, this.state.position);
         this.updateDerivedState(earth);
         C3.clone(this.state.sphereCenter, initial.sphereCenter);
 
-        Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter));
+        // Terne con origine nel centro della sfera e asse Su lungo la
+        // normale locale del modello di Terra.
+        earth.heightAboveSurface(initial.position, initial.normal);
+        Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter, initial.normal, this));
         this.#computeInitialVelocity();
-        C3.clone(initial.velocityECI, this.state.velocity);
+        C3.clone(initial.velocity.eci, this.state.velocity);
 
         Object.values(this.trajectories).forEach((trajectory) => trajectory.clear());
         this.recordTrajectory(0);
     }
 
     // Aggiunge il centro corrente della sfera (istante "seconds") alle
-    // traiettorie.
+    // traiettorie, nelle coordinate di ciascuna.
     recordTrajectory(seconds) {
-        const center = this.state.sphereCenter;
-        this.trajectories.eci.addPoint(center);
-        this.trajectories.ecef.addPoint(eciToEcef(center, earthRotationAngle(seconds), this.#scratchEcef));
+        Object.values(this.trajectories).forEach((trajectory) => {
+            trajectory.addPoint(this.pointTo(trajectory, seconds, this.state.sphereCenter, this.#scratchPoint));
+        });
     }
 
     // Distanza con segno del baricentro dalla superficie, lungo la
@@ -658,19 +1032,63 @@ class Particle {
     // Est, Nord, Su sono quelli del punto di partenza.
     #computeInitialVelocity() {
         const C3 = Cesium.Cartesian3;
-        const frame = this.startFrames.ecef; // A t = 0 ECEF = ECI
-        const initial = this.initial;
-        const drag = dragVelocity(initial.position);
+        const frame = this.startFrames.eci; // Sistema del padre della terna = ECI
+        const { velocity } = this.initial;
+        const master = this.velocityMaster;
+        const other = master === "eci" ? "ecef" : "eci";
+        const drag = this.#rotationAxis.dragVelocity(this.initial.position);
 
-        if (this.velocityMaster === "relative") {
-            frame.toCartesian(EnuFrame.fromSpherical(this.velocity.relative), initial.velocityECEF);
-            C3.add(initial.velocityECEF, drag, initial.velocityECI);
-            EnuFrame.toSpherical(frame.toLocal(initial.velocityECI), this.velocity.absolute);
+        frame.toCartesian(EnuFrame.fromSpherical(this.velocity[master]), velocity[master]);
+        if (master === "ecef") {
+            C3.add(velocity.ecef, drag, velocity.eci);
         } else {
-            frame.toCartesian(EnuFrame.fromSpherical(this.velocity.absolute), initial.velocityECI);
-            C3.subtract(initial.velocityECI, drag, initial.velocityECEF);
-            EnuFrame.toSpherical(frame.toLocal(initial.velocityECEF), this.velocity.relative);
+            C3.subtract(velocity.eci, drag, velocity.ecef);
         }
+        EnuFrame.toSpherical(frame.toLocal(velocity[other]), this.velocity[other]);
+    }
+}
+
+// ---------------------------------------------------- src/model/rotationAxis.js
+// ============================================================
+// rotationAxis.js — Asse di rotazione terrestre, figlio di World.
+//
+// Unica definizione della rotazione terrestre: la Terra ruota attorno
+// a questo asse (vedi Earth) e la velocità di trascinamento si calcola
+// da qui. La direzione è l'asse Z del nodo (posa identità: asse Z di
+// World, verso il Polo Nord).
+// ============================================================
+
+
+const OMEGA = 7.292115e-5; // Velocità angolare terrestre [rad/s]
+
+class RotationAxis extends SceneNode {
+    angularVelocity = OMEGA; // [rad/s]
+
+    // Versore dell'asse nel sistema del padre (copia).
+    get direction() {
+        return this.axes[2];
+    }
+
+    // Vettore velocità angolare ω nel sistema del padre [rad/s].
+    get omega() {
+        return Cesium.Cartesian3.multiplyByScalar(this.direction, this.angularVelocity, new Cesium.Cartesian3());
+    }
+
+    // Angolo di cui la Terra ha ruotato dopo "seconds" secondi simulati.
+    angle(seconds) {
+        return this.angularVelocity * seconds;
+    }
+
+    // Velocità di trascinamento ω × r di un punto solidale con la Terra
+    // in "position" (sistema del padre).
+    dragVelocity(position, result) {
+        return dragVelocity(this.omega, position, result);
+    }
+
+    // Velocità relativa alla Terra v - ω × r di un punto in "position"
+    // con velocità "velocity" (sistema del padre).
+    relativeVelocity(position, velocity, result) {
+        return relativeVelocity(this.omega, position, velocity, result);
     }
 }
 
@@ -679,10 +1097,22 @@ class Particle {
 // simulation.js — Modello: particella che si muove attorno alla
 // Terra in rotazione.
 //
-// Contiene ciò che è comune a tutte le particelle: modello di Terra,
-// tempo simulato, integrazione e urti. Lo stato e le condizioni
-// iniziali di ogni particella sono in Particle; i metodi di
+// Contiene ciò che è comune a tutte le particelle: la gerarchia della
+// scena, il tempo simulato, l'integrazione e gli urti. Lo stato e le
+// condizioni iniziali di ogni particella sono in Particle; i metodi di
 // integrazione ricevono la particella su cui agire.
+//
+// Gerarchia della scena (padre -> figli, vedi SceneNode):
+//   World (radice, coordinate ECI)
+//     -> Terra (coordinate ECEF, contiene il modello di Terra attivo)
+//          -> terna locale relativa, traiettoria relativa,
+//             freccia della velocità relativa, Telecamera ECEF,
+//             punto di partenza
+//     -> asse di rotazione
+//     -> particella
+//     -> terna locale assoluta, traiettoria assoluta,
+//        freccia della velocità assoluta, Telecamera ECI
+// Le telecamere non partecipano alla dinamica.
 //
 // Non dipende dal livello di presentazione (né Viewer, né DOM, né
 // orologio di Cesium): usa solo le classi matematiche di Cesium, quindi
@@ -702,11 +1132,19 @@ const MAX_CONTACTS_PER_STEP = 5;      // Urti risolti in un singolo passo
 const CONTACT_BISECTIONS = 40;        // Iterazioni per l'istante di contatto
 
 class Simulation {
-    // Modello di Terra usato da gravità e urti: sfera (true) o
-    // ellissoide WGS84 con J2 (false).
-    useSphericalEarth = true;
+    // Radice della gerarchia della scena (coordinate ECI).
+    world = new SceneNode();
 
-    particle = new Particle();
+    rotationAxis = new RotationAxis();
+
+    // Terra: nodo ECEF con il modello usato da gravità e urti.
+    earth = new Earth(this.rotationAxis);
+
+    particle = new Particle(this.rotationAxis);
+
+    // Telecamere ECI (figlia di World) ed ECEF (figlia della Terra). Il
+    // reset non le sposta.
+    cameras = bySystem(() => new Camera());
 
     time = 0; // Istante simulato a cui si riferisce lo stato [s]
 
@@ -720,18 +1158,33 @@ class Simulation {
     };
 
     constructor() {
+        this.#buildScene();
         this.reset();
     }
 
-    // Modello di Terra attivo (vedi earth.js).
-    get earth() {
-        return this.useSphericalEarth ? SPHERICAL_EARTH : ELLIPSOIDAL_EARTH;
+    // Costruisce la gerarchia della scena (vedi l'intestazione del file).
+    #buildScene() {
+        const { world, earth, particle, cameras } = this;
+
+        world.addChild(earth);
+        world.addChild(this.rotationAxis);
+        world.addChild(particle);
+        world.addChild(particle.startFrames.eci);    // Terna locale assoluta
+        world.addChild(particle.trajectories.eci);   // Traiettoria assoluta
+        world.addChild(particle.velocityArrows.eci); // Freccia della velocità assoluta
+        world.addChild(cameras.eci);
+
+        earth.addChild(particle.startFrames.ecef);    // Terna locale relativa
+        earth.addChild(particle.trajectories.ecef);   // Traiettoria relativa
+        earth.addChild(particle.velocityArrows.ecef); // Freccia della velocità relativa
+        earth.addChild(cameras.ecef);
+        earth.addChild(particle.startPoint);
     }
 
     // Riporta la simulazione a t = 0, applicando le condizioni iniziali
     // correnti (modello di Terra e particelle).
     reset() {
-        this.particle.reset(this.earth);
+        this.particle.reset(this.earth.model);
         this.time = 0;
     }
 
@@ -755,7 +1208,7 @@ class Simulation {
         }
 
         this.time = target;
-        this.particle.updateDerivedState(this.earth);
+        this.particle.updateDerivedState(this.earth.model);
         this.particle.recordTrajectory(target);
     }
 
@@ -767,7 +1220,7 @@ class Simulation {
     // avvicinando (dopo il rimbalzo la velocità normale è positiva).
     #isCollidingInward(particle) {
         const n = this.#scratch.normal;
-        const c = particle.clearance(this.earth, n);
+        const c = particle.clearance(this.earth.model, n);
         if (!Cesium.defined(c) || c >= 0) {
             return false;
         }
@@ -779,7 +1232,7 @@ class Simulation {
     #reflectVelocity(particle) {
         const n = this.#scratch.normal;
         const v = particle.state.velocity;
-        particle.clearance(this.earth, n);
+        particle.clearance(this.earth.model, n);
         const vn = Cesium.Cartesian3.dot(v, n);
         if (vn < 0) {
             Cesium.Cartesian3.subtract(
@@ -840,7 +1293,7 @@ class Simulation {
     //   v += ½·(a0 + a1)·h
     #verletStep(particle, h) {
         const C3 = Cesium.Cartesian3;
-        const earth = this.earth;
+        const earth = this.earth.model;
         const p = particle.state.position;
         const v = particle.state.velocity;
         const temp = this.#scratch.temp;
@@ -1215,8 +1668,8 @@ const VELOCITY_ROWS = [
 
 // Colonne della velocità iniziale: [terna, suffisso dell'etichetta].
 const VELOCITY_COLUMNS = [
-    ["relative", "relativa (ECEF)"],
-    ["absolute", "assoluta (ECI)"]
+    ["ecef", "relativa (ECEF)"],
+    ["eci", "assoluta (ECI)"]
 ];
 
 // Righe della sezione Visualizzazione: [etichetta, oggetto].
@@ -1579,133 +2032,16 @@ class PanelView {
     }
 }
 
-// ---------------------------------------------------- src/view/scene/cameraFraming.js
-// ============================================================
-// cameraFraming.js — Inquadratura iniziale: particella vista da
-// sud-sud-est con la Terra intera nella vista.
-//
-// Funzioni pure (nessun accesso al Viewer): la vista fornisce solo la
-// tangente del semiangolo del campo visivo lungo la larghezza.
-//
-// La telecamera guarda il centro della sfera della particella da una direzione fissa
-// nella terna locale Est-Nord-Su del punto di partenza:
-//   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
-//   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
-// Il vettore Up sta nel piano formato dalla direzione di vista e dalla
-// normale alla superficie (nessun rollio): la verticale locale appare
-// verticale sullo schermo.
-//
-// La distanza è quella per cui il disco terrestre occupa la frazione
-// EARTH_WIDTH_FRACTION della larghezza della vista.
-// ============================================================
-
-
-const CAMERA_AZIMUTH_DEG = 150;    // Dal Nord, in senso orario [°]
-const CAMERA_ELEVATION_DEG = 45;   // Sopra l'orizzonte locale [°]
-const EARTH_WIDTH_FRACTION = 0.95; // Larghezza della Terra / larghezza della vista
-
-// Frazione della larghezza della vista occupata dal diametro del disco
-// terrestre, visto da "position" lungo "direction" con il vettore "up"
-// (Infinity se la telecamera è troppo vicina).
-//
-// I bordi del disco sono dati dai due piani tangenti alla Terra che
-// contengono la retta per la telecamera parallela a Up: nel piano
-// (Destra, direzione) il centro della Terra sta all'angolo
-// a = atan2(x, z) e i piani tangenti a a ± asin(R / distanza).
-function earthWidthFraction(position, direction, up, tanHalfFovWidth) {
-    const C3 = Cesium.Cartesian3;
-    const right = C3.cross(direction, up, new C3());
-    const toCenter = C3.negate(position, new C3());
-    const x = C3.dot(toCenter, right);
-    const z = C3.dot(toCenter, direction);
-    const distance = Math.hypot(x, z);
-    const radius = Cesium.Ellipsoid.WGS84.maximumRadius;
-    if (distance <= radius) {
-        return Infinity;
-    }
-    const a = Math.atan2(x, z);
-    const b = Math.asin(radius / distance);
-    if (a + b >= Math.PI / 2 || a - b <= -Math.PI / 2) {
-        return Infinity;
-    }
-    return (Math.tan(a + b) - Math.tan(a - b)) / (2 * tanHalfFovWidth);
-}
-
-// Punto della semiretta target + d·offset (offset versore) alla distanza
-// d a cui la Terra occupa EARTH_WIDTH_FRACTION della larghezza
-// (bisezione: allontanandosi la Terra rimpicciolisce).
-function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
-    const candidate = new Cesium.Cartesian3();
-    // Posizione della telecamera a "distance" da target.
-    function cameraAt(distance, result) {
-        Cesium.Cartesian3.multiplyByScalar(offset, distance, result);
-        return Cesium.Cartesian3.add(target, result, result);
-    }
-    // Vero se a "distance" la Terra occupa più della frazione voluta.
-    function tooLarge(distance) {
-        const fraction = earthWidthFraction(cameraAt(distance, candidate), direction, up, tanHalfFovWidth);
-        return fraction > EARTH_WIDTH_FRACTION;
-    }
-
-    let near = 0;
-    let far = 1.0e7;
-    while (tooLarge(far)) {
-        far *= 2;
-    }
-    for (let i = 0; i < 50; i++) {
-        const mid = 0.5 * (near + far);
-        if (tooLarge(mid)) {
-            near = mid;
-        } else {
-            far = mid;
-        }
-    }
-    return cameraAt(far, new Cesium.Cartesian3());
-}
-
-// Posa { position, direction, up } che inquadra "target" (centro della sfera della
-// particella) dal punto di partenza "surfacePoint". Valida a t = 0, quando
-// ECI ed ECEF coincidono.
-function startPointFraming(surfacePoint, target, tanHalfFovWidth) {
-    const C3 = Cesium.Cartesian3;
-    const enu = enuRotation(surfacePoint);
-
-    // Versore dalla particella verso la telecamera.
-    const offset = Cesium.Matrix3.multiplyByVector(
-        enu, directionEnu(CAMERA_AZIMUTH_DEG, CAMERA_ELEVATION_DEG), new C3()
-    );
-    C3.normalize(offset, offset);
-    const direction = C3.negate(offset, new C3());
-
-    // Up: componente della normale ortogonale alla direzione di vista.
-    const normal = Cesium.Matrix3.getColumn(enu, 2, new C3());
-    const up = C3.subtract(
-        normal,
-        C3.multiplyByScalar(direction, C3.dot(normal, direction), new C3()),
-        new C3()
-    );
-    C3.normalize(up, up);
-
-    return {
-        position: positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth),
-        direction: direction,
-        up: up
-    };
-}
-
 // ---------------------------------------------------- src/view/scene/cameraRig.js
 // ============================================================
-// cameraRig.js — Telecamera fissa in ECI o solidale con la Terra
-// (ECEF), comandi del mouse e pan.
+// cameraRig.js — Presentazione delle telecamere del modello sulla
+// telecamera di Cesium, comandi del mouse e pan.
 //
-// Modalità (mode):
-//   - "eci": ferma nello spazio inerziale; la posa ECI è riapplicata a
-//     ogni frame, quindi la Terra ruota sullo schermo. I movimenti fatti
-//     dall'utente vengono riconosciuti e acquisiti come nuova posa ECI;
-//   - "ecef": solidale con la Terra (la Terra appare immobile). La posa
-//     di Cesium è già in coordinate ECEF, quindi basta non toccarla.
-// Il cambio di modalità non sposta la telecamera: la vista resta
-// identica e da quel momento è mantenuta nel nuovo sistema.
+// La posa da mostrare arriva dal ViewModel (telecamera attiva, in
+// ECEF) ed è applicata a ogni frame con apply(). Tra un frame e il
+// successivo l'utente può muovere la telecamera di Cesium con il mouse:
+// takeUserMove() riconosce lo spostamento e lo restituisce, così che il
+// ViewModel lo registri nella telecamera del modello che era mostrata.
 // ============================================================
 
 
@@ -1765,22 +2101,11 @@ function setCameraPose(camera, position, direction, up) {
 }
 
 class CameraRig {
-    // Diventa vero al primo movimento della telecamera fatto dall'utente.
-    movedByUser = false;
-
     #viewer;
     #camera;
-    #mode = "eci";
-    #earthAngle = 0;
-    // Posa da mantenere ferma in ECI.
-    #inertialPose = {
-        position: new Cesium.Cartesian3(),
-        direction: new Cesium.Cartesian3(),
-        up: new Cesium.Cartesian3()
-    };
-    // Ultima posa (ECEF) impostata da qui, per riconoscere i movimenti
-    // dell'utente.
-    #appliedPose;
+    // Ultima posa applicata: { system, seconds, pose } con la posa ECEF
+    // effettiva di Cesium, per riconoscere gli spostamenti dell'utente.
+    #applied;
     // Profondità del punto afferrato con il pan [m]; undefined = nessun pan.
     #panDepth;
 
@@ -1792,99 +2117,53 @@ class CameraRig {
         this.#installPan();
     }
 
-    // Sistema in cui la telecamera resta ferma: "eci" o "ecef".
-    setMode(mode) {
-        if (mode === "eci" && this.#mode !== "eci") {
-            // La posa attuale diventa quella da mantenere ferma in ECI.
-            this.#captureInertialPose();
-        }
-        this.#mode = mode;
-    }
-
-    // Inquadratura iniziale: particella in "target" vista dal punto di
-    // partenza "surfacePoint". Da chiamare a t = 0 (ECI = ECEF).
-    frameStartPoint(surfacePoint, target) {
-        const pose = startPointFraming(surfacePoint, target, this.#tanHalfFovWidth());
-        Cesium.Cartesian3.clone(pose.position, this.#inertialPose.position);
-        Cesium.Cartesian3.clone(pose.direction, this.#inertialPose.direction);
-        Cesium.Cartesian3.clone(pose.up, this.#inertialPose.up);
-        if (this.#mode === "eci") {
-            this.#applyInertialPose();
-        }
-    }
-
-    // A ogni frame, con l'angolo terrestre del frame.
-    update(earthAngle) {
-        // Un movimento dell'utente è acquisito con l'angolo del frame
-        // precedente, quello con cui era stata impostata la posa.
-        if (this.#mode === "eci" && this.#poseChanged()) {
-            this.#captureInertialPose();
-            this.movedByUser = true;
-        }
-        this.#earthAngle = earthAngle;
-        if (this.#mode === "eci") {
-            this.#applyInertialPose();
-        }
-    }
-
-    // --------------------------------------------------
-    // POSA INERZIALE
-    // --------------------------------------------------
-
-    // Tangente del semiangolo del campo visivo lungo la larghezza (in
-    // Cesium "fov" vale per il lato più lungo della vista).
-    #tanHalfFovWidth() {
+    // Tangente del semiangolo del campo visivo lungo la larghezza della
+    // vista (in Cesium "fov" vale per il lato più lungo).
+    get tanHalfFovWidth() {
         const container = this.#viewer.container;
         const width = container.clientWidth || 1;
         const height = container.clientHeight || 1;
         return Math.tan(this.#camera.frustum.fov / 2) * width / Math.max(width, height);
     }
 
-    // Annota la posa attuale come impostata da qui.
-    #rememberAppliedPose() {
+    // Mostra la posa "pose" (ECEF) della telecamera "system" del modello
+    // all'istante "seconds".
+    apply(system, seconds, pose) {
+        setCameraPose(this.#camera, pose.position, pose.direction, pose.up);
+        this.#applied = { system: system, seconds: seconds, pose: this.#currentPose() };
+    }
+
+    // Se l'utente ha spostato la telecamera dopo l'ultimo apply(),
+    // restituisce { system, seconds, pose }: la telecamera del modello
+    // che era mostrata, l'istante in cui era stata applicata e la nuova
+    // posa ECEF. Altrimenti undefined.
+    takeUserMove() {
+        const applied = this.#applied;
+        if (!applied || !this.#poseChanged(applied.pose)) {
+            return undefined;
+        }
+        const pose = this.#currentPose();
+        this.#applied = { ...applied, pose: pose };
+        return { system: applied.system, seconds: applied.seconds, pose: pose };
+    }
+
+    // Posa attuale della telecamera di Cesium, in ECEF (copie).
+    #currentPose() {
         const camera = this.#camera;
-        this.#appliedPose = {
+        return {
             position: Cesium.Cartesian3.clone(camera.positionWC),
             direction: Cesium.Cartesian3.clone(camera.directionWC),
             up: Cesium.Cartesian3.clone(camera.upWC)
         };
     }
 
-    // Vero se la posa è cambiata dall'ultima impostata da qui, cioè se
-    // l'ha mossa l'utente.
-    #poseChanged() {
+    // Vero se la telecamera di Cesium non è più nella posa "pose".
+    #poseChanged(pose) {
         const camera = this.#camera;
-        const applied = this.#appliedPose;
         const distance = Cesium.Cartesian3.distance;
-        return !applied ||
-            distance(camera.positionWC, applied.position) > MOVED_POSITION_TOLERANCE ||
-            distance(camera.directionWC, applied.direction) > MOVED_AXIS_TOLERANCE ||
-            distance(camera.upWC, applied.up) > MOVED_AXIS_TOLERANCE;
-    }
-
-    // La posa attuale (ECEF) diventa la posa da mantenere ferma in ECI.
-    #captureInertialPose() {
-        const camera = this.#camera;
-        const pose = this.#inertialPose;
-        const angle = this.#earthAngle;
-        ecefToEci(camera.positionWC, angle, pose.position);
-        Cesium.Cartesian3.normalize(ecefToEci(camera.directionWC, angle, pose.direction), pose.direction);
-        Cesium.Cartesian3.normalize(ecefToEci(camera.upWC, angle, pose.up), pose.up);
-        this.#rememberAppliedPose();
-    }
-
-    // Porta la telecamera nella posa ECI, convertita in ECEF con
-    // l'angolo terrestre del frame.
-    #applyInertialPose() {
-        const pose = this.#inertialPose;
-        const angle = this.#earthAngle;
-        setCameraPose(
-            this.#camera,
-            eciToEcef(pose.position, angle),
-            eciToEcef(pose.direction, angle),
-            eciToEcef(pose.up, angle)
-        );
-        this.#rememberAppliedPose();
+        return distance(camera.positionWC, pose.position) > MOVED_POSITION_TOLERANCE ||
+            distance(camera.directionWC, pose.direction) > MOVED_AXIS_TOLERANCE ||
+            distance(camera.upWC, pose.up) > MOVED_AXIS_TOLERANCE;
     }
 
     // --------------------------------------------------
@@ -1901,8 +2180,9 @@ class CameraRig {
     // vista, dove p è la profondità di quel punto lungo la direzione di
     // vista (del centro della Terra se il cursore è nello spazio).
     //
-    // Con la telecamera ECI lo spostamento viene acquisito come movimento
-    // dell'utente; con quella ECEF resta solidale con la Terra.
+    // Come ogni movimento fatto con il mouse, lo spostamento è
+    // riconosciuto da takeUserMove() e registrato nella telecamera del
+    // modello mostrata.
 
     // Registra i gestori di inizio, movimento e fine del pan.
     #installPan() {
@@ -1951,10 +2231,10 @@ class CameraRig {
 // ============================================================
 // trackLayer.js — Disegno di una traiettoria della particella.
 //
-// Riceve i punti della traiettoria (nel sistema della traiettoria) e
-// li disegna con una modelMatrix verso ECEF (identità per una
-// traiettoria solidale con la Terra, rotazione ECI -> ECEF per una
-// ferma nello spazio inerziale).
+// Riceve i punti della traiettoria (nelle coordinate della traiettoria)
+// e li disegna con una modelMatrix verso ECEF (identità per una
+// traiettoria solidale con la Terra, rotazione per una ferma nello
+// spazio inerziale).
 //
 // Prestazioni: in una PolylineCollection sia la variazione del numero
 // di vertici sia la variazione della modelMatrix ricostruiscono TUTTI
@@ -2086,8 +2366,9 @@ class TrackLayer {
 // sceneView.js — Scena 3D di Cesium.
 //
 // Solo presentazione: disegna ciò che il ViewModel fornisce (stato di
-// ogni istante già in coordinate ECEF) e inoltra al ViewModel il punto
-// scelto sul globo.
+// ogni istante e posa della telecamera attiva, già in coordinate ECEF)
+// e inoltra al ViewModel il punto scelto sul globo e gli spostamenti
+// della telecamera fatti dall'utente.
 //
 // Orologio di Cesium come unica sorgente del tempo: le entità sono
 // aggiornate da Cesium con il "time" del frame (CallbackProperty) e
@@ -2134,8 +2415,6 @@ class SceneView {
     #startMarker;
     #markerPoint;
     #scratchPixelSphere = new Cesium.BoundingSphere();
-    #scratchRotation3 = new Cesium.Matrix3();
-    #scratchRotation4 = new Cesium.Matrix4();
 
     constructor(viewer, viewModel) {
         this.#viewer = viewer;
@@ -2151,11 +2430,8 @@ class SceneView {
         this.#installPicking();
 
         viewModel.on("change", () => this.#render());
-        viewModel.on("startPointLocated", () => {
-            if (!this.#camera.movedByUser) {
-                this.#frameStartPoint();
-            }
-        });
+        // Il ViewModel inquadra solo le telecamere non spostate dall'utente.
+        viewModel.on("startPointLocated", () => this.#frameStartPoint());
         viewer.scene.preRender.addEventListener((scene, time) => this.#update(time));
 
         this.#frameStartPoint();
@@ -2165,7 +2441,7 @@ class SceneView {
     // Oggetti della scena per i test end-to-end.
     get testObjects() {
         return {
-            arrows: { absolute: this.#arrows.eci, relative: this.#arrows.ecef },
+            arrows: this.#arrows,
             frames: this.#framePolylines
         };
     }
@@ -2174,15 +2450,33 @@ class SceneView {
     // AGGIORNAMENTO
     // --------------------------------------------------
 
-    // Stato del ViewModel all'istante "time" dell'orologio di Cesium.
-    #frameAt(time) {
-        const clock = this.#viewer.clock;
-        return this.#vm.frameAt(Cesium.JulianDate.secondsDifference(time, clock.startTime));
+    // Secondi simulati all'istante "time" dell'orologio di Cesium
+    // (dell'istante corrente se non indicato).
+    #secondsAt(time = this.#viewer.clock.currentTime) {
+        return Cesium.JulianDate.secondsDifference(time, this.#viewer.clock.startTime);
     }
 
-    // Inquadratura iniziale sul punto di partenza.
+    // Stato del ViewModel all'istante "time" dell'orologio di Cesium.
+    #frameAt(time) {
+        return this.#vm.frameAt(this.#secondsAt(time));
+    }
+
+    // Inquadratura iniziale sul punto di partenza, mostrata subito.
     #frameStartPoint() {
-        this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startSphereCenter);
+        this.#vm.frameStartPoint(this.#camera.tanHalfFovWidth);
+        this.#showCamera(this.#secondsAt());
+    }
+
+    // Registra nel modello l'eventuale spostamento della telecamera fatto
+    // dall'utente, poi mostra la posa della telecamera attiva
+    // all'istante "seconds".
+    #showCamera(seconds) {
+        const vm = this.#vm;
+        const move = this.#camera.takeUserMove();
+        if (move) {
+            vm.moveCamera(move.system, move.pose, move.seconds);
+        }
+        this.#camera.apply(vm.cameraMode, seconds, vm.cameraPose(seconds));
     }
 
     // Stato del ViewModel che non dipende dal tempo.
@@ -2202,13 +2496,15 @@ class SceneView {
         }
 
         this.#viewer.canvas.style.cursor = vm.pickMode ? "crosshair" : "";
-        this.#camera.setMode(vm.cameraMode);
+        // Subito, senza attendere il frame: la telecamera attiva può
+        // essere cambiata.
+        this.#showCamera(this.#secondsAt());
     }
 
     // A ogni frame, prima del rendering.
     #update(time) {
         const frame = this.#frameAt(time);
-        this.#camera.update(frame.earthAngle);
+        this.#showCamera(frame.seconds);
         this.#updateTracks(frame);
         // Dopo la telecamera: la dimensione a schermo usa la sua posa.
         this.#updateReferenceFrames(frame);
@@ -2237,7 +2533,7 @@ class SceneView {
     #addVelocityArrow(system) {
         const velocityAt = (time) => this.#frameAt(time).velocities[system];
         const positions = (time) => {
-            const { origin: center, vector: velocity } = velocityAt(time);
+            const { position: center, vector: velocity } = velocityAt(time);
             const speed = Cesium.Cartesian3.magnitude(velocity);
             if (speed < VELOCITY_ARROW_MIN_SPEED) {
                 return [Cesium.Cartesian3.clone(center), Cesium.Cartesian3.clone(center)];
@@ -2271,17 +2567,15 @@ class SceneView {
     // TRAIETTORIE
     // --------------------------------------------------
     //
-    // - ECEF (verde): vertici in ECEF, ruotano con la Terra.
-    // - ECI (rossa): vertici in ECI, disegnati con la rotazione
-    //   ECI -> ECEF del frame: la traccia resta ferma nello spazio.
+    // Vertici nelle coordinate della traiettoria, disegnati con la
+    // matrice verso ECEF dell'istante fornita dal ViewModel:
+    // - relativa (verde): figlia della Terra, ruota con la Terra;
+    // - assoluta (rossa): figlia di World, resta ferma nello spazio.
 
-    // Aggiorna la rotazione della traccia ECI e aggiunge i punti nuovi.
+    // Aggiorna la posa delle tracce e aggiunge i punti nuovi.
     #updateTracks(frame) {
-        Cesium.Matrix3.fromRotationZ(-frame.earthAngle, this.#scratchRotation3);
-        Cesium.Matrix4.fromRotation(this.#scratchRotation3, this.#scratchRotation4);
-        this.#tracks.eci.setModelMatrix(this.#scratchRotation4);
-
         REFERENCE_SYSTEMS.forEach((system) => {
+            this.#tracks[system].setModelMatrix(frame.trajectoryTransforms[system]);
             this.#tracks[system].sync(this.#vm.trajectory(system));
         });
     }
@@ -2348,7 +2642,7 @@ class SceneView {
     // FRAME_AXIS_PIXELS a schermo.
     #updateReferenceFrames(frame) {
         REFERENCE_SYSTEMS.forEach((system) => {
-            const { origin, axes } = frame.referenceFrames[system];
+            const { position: origin, axes } = frame.referenceFrames[system];
             const length = FRAME_AXIS_PIXELS * this.#metersPerPixelAt(origin);
             this.#framePolylines[system].forEach((polyline, i) => {
                 const tip = Cesium.Cartesian3.multiplyByScalar(axes[i], length, new Cesium.Cartesian3());
@@ -2435,13 +2729,18 @@ class Observable {
 // dell'interfaccia: riceve il tempo e la posizione geografica tramite
 // le interfacce SimulationClock e GeolocationService.
 //
-// Ogni elemento della scena corrisponde a un elemento del modello:
-//   particella, punto di partenza                       -> Particle
+// Ogni elemento della scena corrisponde a un nodo della gerarchia del
+// modello (SceneNode, vedi Simulation):
+//   Terra                                               -> Earth
+//   particella                                          -> Particle
+//   punto di partenza                                   -> StartPoint
 //   frecce della velocità                               -> Arrow
 //   traiettorie                                         -> Trajectory
 //   terne nel punto di partenza                         -> EnuFrame
-//   asse di rotazione                                   -> rotationAxis
-//                                                          del modello di Terra
+//   asse di rotazione                                   -> RotationAxis
+//   telecamere ECI ed ECEF                              -> Camera
+// Cesium disegna nel sistema ECEF: il ViewModel esprime ogni elemento
+// nelle coordinate della Terra.
 //
 // Eventi emessi (vedi Observable):
 //   "change"            lo stato mostrato dalle viste è cambiato
@@ -2455,7 +2754,8 @@ const PICK_REQUIRES_RESET_MESSAGE =
     "Per selezionare un nuovo punto premi prima il pulsante Reset.";
 
 class SimulationViewModel extends Observable {
-    // Sistema in cui la telecamera resta ferma: "eci" oppure "ecef".
+    // Telecamera attiva: quella ferma in "eci" oppure quella ferma in
+    // "ecef". Ognuna conserva la propria posa.
     cameraMode = "eci";
 
     // Vero mentre si attende il clic sul globo che sceglie il punto.
@@ -2501,7 +2801,7 @@ class SimulationViewModel extends Observable {
 
     // Modello di Terra: sfera (true) o ellissoide (false).
     get sphericalEarth() {
-        return this.#simulation.useSphericalEarth;
+        return this.#simulation.earth.spherical;
     }
 
     // Raggio della particella [m].
@@ -2511,12 +2811,12 @@ class SimulationViewModel extends Observable {
 
     // Latitudine del punto di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
-        return this.#particle.start.latitudeDeg;
+        return this.#particle.startPoint.latitudeDeg;
     }
 
     // Longitudine del punto di partenza [°], in [0°, 360°).
     get longitudeDeg() {
-        return this.#particle.start.longitudeDeg;
+        return this.#particle.startPoint.longitudeDeg;
     }
 
     // Quota di partenza [km].
@@ -2526,27 +2826,32 @@ class SimulationViewModel extends Observable {
 
     // Punto di partenza sulla superficie (ECEF).
     get startSurfacePoint() {
-        return this.#particle.start.surfacePointECEF;
+        return this.#particle.startPoint.positionIn(this.#simulation.earth, 0);
     }
 
-    // Centro della sfera della particella a t = 0 (ECI = ECEF).
-    get startSphereCenter() {
-        return this.#particle.initial.sphereCenter;
+    // Posa { position, direction, up } della telecamera attiva in ECEF
+    // all'istante "seconds" [s simulati].
+    cameraPose(seconds) {
+        return this.#simulation.cameras[this.cameraMode].expressedIn(this.#simulation.earth, seconds);
     }
 
-    // Terna di velocità iniziale: "relative" (ECEF) o "absolute" (ECI).
+    // Terna di velocità iniziale: "ecef" (relativa) o "eci" (assoluta).
     velocity(frame) {
         return this.#particle.velocity[frame];
     }
 
-    // Direzione dell'asse di rotazione terrestre (verso il Polo Nord).
+    // Direzione dell'asse di rotazione terrestre (verso il Polo Nord), in
+    // ECEF. La Terra ruota attorno all'asse, quindi è la stessa in ogni
+    // istante.
     get rotationAxis() {
-        return this.#simulation.earth.rotationAxis.direction;
+        const { earth, rotationAxis } = this.#simulation;
+        return rotationAxis.axesIn(earth, 0)[2]; // L'asse è l'asse Z del nodo
     }
 
-    // Traiettoria della particella nel sistema "eci" o "ecef":
-    // { points, revision } (vedi Trajectory). I punti sono in sola
-    // lettura.
+    // Traiettoria assoluta ("eci") o relativa ("ecef") della particella:
+    // { points, revision } (vedi Trajectory). I punti sono nelle
+    // coordinate della traiettoria (vedi frameAt().trajectoryTransforms),
+    // in sola lettura.
     trajectory(system) {
         const { points, revision } = this.#particle.trajectories[system];
         return { points, revision };
@@ -2629,15 +2934,33 @@ class SimulationViewModel extends Observable {
     // Modello di Terra: sfera (true) o ellissoide (false).
     setSphericalEarth(spherical) {
         this.#editSetup(() => {
-            this.#simulation.useSphericalEarth = spherical;
+            this.#simulation.earth.spherical = spherical;
         });
     }
 
-    // Sistema in cui la telecamera resta ferma ("eci" o "ecef"). Attivo
-    // anche durante la simulazione.
+    // Telecamera attiva ("eci" o "ecef"). Attivo anche durante la
+    // simulazione.
     setCameraMode(mode) {
         this.cameraMode = mode;
         this.emit("change");
+    }
+
+    // L'utente ha spostato la telecamera "system": "pose" è la nuova
+    // posa in ECEF all'istante "seconds" [s simulati].
+    moveCamera(system, pose, seconds) {
+        const camera = this.#simulation.cameras[system];
+        camera.setFrom(this.#simulation.earth, pose, seconds);
+        camera.movedByUser = true;
+    }
+
+    // Inquadra il punto di partenza con le telecamere che l'utente non
+    // ha ancora spostato. "tanHalfFovWidth": tangente del semiangolo
+    // del campo visivo lungo la larghezza della vista.
+    frameStartPoint(tanHalfFovWidth) {
+        const startFrame = this.#particle.startFrames.ecef; // Terna locale nel punto di partenza
+        Object.values(this.#simulation.cameras)
+            .filter((camera) => !camera.movedByUser)
+            .forEach((camera) => camera.frameStartPoint(startFrame, tanHalfFovWidth));
     }
 
     // item: "frame", "track" o "velocity"; frame: "eci" o "ecef".
@@ -2680,25 +3003,25 @@ class SimulationViewModel extends Observable {
         }
         this.#simulation.advanceTo(seconds);
 
-        const angle = earthRotationAngle(seconds);
+        const earth = this.#simulation.earth;
         const particle = this.#particle;
         const state = particle.state;
-        const particlePositionEcef = eciToEcef(state.position, angle);
-        // { eci, ecef } -> stessi elementi in coordinate ECEF all'istante.
-        const inEcef = (elements) => bySystem((system) => elements[system].inEcef(seconds));
-        const velocities = inEcef(particle.velocityArrows);
+        const particlePositionEcef = particle.pointTo(earth, seconds, state.position);
+        const velocities = bySystem((system) => particle.velocityArrows[system].expressedIn(earth, seconds));
         const speedKmh = (system) => Cesium.Cartesian3.magnitude(velocities[system].vector) * KMH_PER_MS;
 
         this.#frame = {
             seconds: seconds,
-            earthAngle: angle,
             // Baricentro della particella e centro della sfera disegnata.
             particlePositionEcef: particlePositionEcef,
-            sphereCenterEcef: eciToEcef(state.sphereCenter, angle),
-            // Velocità assoluta (eci) e relativa (ecef): { origin, vector }.
+            sphereCenterEcef: particle.pointTo(earth, seconds, state.sphereCenter),
+            // Velocità assoluta (eci) e relativa (ecef): { position, vector }.
             velocities: velocities,
-            // Terne nel punto di partenza: { origin, axes: [E, N, U] }.
-            referenceFrames: inEcef(particle.startFrames),
+            // Terne nel punto di partenza: { position, axes: [E, N, U] }.
+            referenceFrames: bySystem((system) => particle.startFrames[system].poseIn(earth, seconds)),
+            // Matrici dalle coordinate delle traiettorie (vedi
+            // trajectory()) a ECEF.
+            trajectoryTransforms: bySystem((system) => particle.trajectories[system].transformTo(earth, seconds)),
             status: {
                 ...geographicPosition(particlePositionEcef),
                 timeSeconds: seconds,
