@@ -1,10 +1,10 @@
 // ============================================================
 // trackLayer.js — Disegno di una traiettoria della particella.
 //
-// Riceve i punti della traiettoria (nel sistema della traiettoria) e
-// li disegna con una modelMatrix verso ECEF (identità per una
-// traiettoria solidale con la Terra, rotazione ECI -> ECEF per una
-// ferma nello spazio inerziale).
+// Riceve i punti della traiettoria (nelle coordinate della traiettoria)
+// e li disegna con una modelMatrix verso ECEF (identità per una
+// traiettoria solidale con la Terra, rotazione per una ferma nello
+// spazio inerziale).
 //
 // Prestazioni: in una PolylineCollection sia la variazione del numero
 // di vertici sia la variazione della modelMatrix ricostruiscono TUTTI

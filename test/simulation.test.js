@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as Cesium from "cesium";
-import { OMEGA, eciToEcef } from "../src/geometry/referenceFrames.js";
+import { OMEGA } from "../src/model/rotationAxis.js";
 import {
     EARTH_RADIUS,
     ELLIPSOIDAL_EARTH,
@@ -18,7 +18,7 @@ import {
     SPHERICAL_EARTH
 } from "../src/model/earth.js";
 import { Simulation } from "../src/model/simulation.js";
-import { createSimulation } from "./helpers.js";
+import { createSimulation, eciToEcef } from "./helpers.js";
 
 // Latitudine geodetica [°] della particella all'istante t (s).
 function latitudeAt(simulation, t) {
@@ -70,18 +70,27 @@ describe("gravità", function () {
         });
     });
 
-    it("i due modelli ruotano attorno all'asse Z con velocità angolare OMEGA", function () {
-        [SPHERICAL_EARTH, ELLIPSOIDAL_EARTH].forEach((earth) => {
-            expect(Cesium.Cartesian3.equals(earth.rotationAxis.direction, Cesium.Cartesian3.UNIT_Z)).toBe(true);
-            expect(earth.rotationAxis.angularVelocity).toBe(OMEGA);
-        });
+    it("la Terra ruota attorno all'asse Z con velocità angolare OMEGA", function () {
+        const { rotationAxis } = new Simulation();
+        expect(Cesium.Cartesian3.equals(rotationAxis.direction, Cesium.Cartesian3.UNIT_Z)).toBe(true);
+        expect(rotationAxis.angularVelocity).toBe(OMEGA);
     });
 
-    it("la simulazione usa il modello scelto", function () {
+    it("la velocità relativa usa la rotazione dell'asse della simulazione", function () {
+        const simulation = createSimulation({ ecef: { speedKmh: 1000, azimuthDeg: 90 } });
+        const { particle, rotationAxis } = simulation;
+        rotationAxis.angularVelocity = 2 * OMEGA;
+        const { position, velocity } = particle.state;
+        const drag = new Cesium.Cartesian3(-2 * OMEGA * position.y, 2 * OMEGA * position.x, 0);
+        const expected = Cesium.Cartesian3.subtract(velocity, drag, new Cesium.Cartesian3());
+        expect(Cesium.Cartesian3.distance(particle.velocityArrows.ecef.value(0), expected)).toBeLessThan(1e-9);
+    });
+
+    it("la Terra usa il modello scelto", function () {
         const simulation = new Simulation();
-        expect(simulation.earth).toBe(SPHERICAL_EARTH);
-        simulation.useSphericalEarth = false;
-        expect(simulation.earth).toBe(ELLIPSOIDAL_EARTH);
+        expect(simulation.earth.model).toBe(SPHERICAL_EARTH);
+        simulation.earth.spherical = false;
+        expect(simulation.earth.model).toBe(ELLIPSOIDAL_EARTH);
     });
 });
 
@@ -116,7 +125,7 @@ describe("distanza dalla superficie", function () {
 describe("simulazione", function () {
     it("all'avvio: Terra sferica, t = 0, particella a quota 0", function () {
         const simulation = new Simulation();
-        expect(simulation.useSphericalEarth).toBe(true);
+        expect(simulation.earth.spherical).toBe(true);
         expect(simulation.time).toBe(0);
         expect(simulation.particle.state.altitude).toBeCloseTo(0, 6);
     });
@@ -132,7 +141,7 @@ describe("simulazione", function () {
 
     it("cambiare modello di Terra sposta la partenza sulla nuova superficie", function () {
         const simulation = createSimulation({ latitude: 30 });
-        simulation.useSphericalEarth = false;
+        simulation.earth.spherical = false;
         simulation.reset();
         const expected = Cesium.Cartesian3.fromDegrees(7.1, 30, 225000);
         expect(Cesium.Cartesian3.distance(simulation.particle.initial.position, expected)).toBeLessThan(1e-3);
@@ -209,18 +218,18 @@ describe("dinamica", function () {
     it.each([true, false])("conserva l'energia meccanica (Terra sferica: %s)", function (spherical) {
         const simulation = createSimulation({
             spherical,
-            relative: { speedKmh: 3000, azimuthDeg: 30, elevationDeg: 20 }
+            ecef: { speedKmh: 3000, azimuthDeg: 30, elevationDeg: 20 }
         });
         const particle = simulation.particle;
-        const e0 = particle.mechanicalEnergy(simulation.earth);
+        const e0 = particle.mechanicalEnergy(simulation.earth.model);
         for (let t = 100; t <= 30000; t += 100) {
             simulation.advanceTo(t);
         }
-        expect(Math.abs((particle.mechanicalEnergy(simulation.earth) - e0) / e0)).toBeLessThan(1e-8);
+        expect(Math.abs((particle.mechanicalEnergy(simulation.earth.model) - e0) / e0)).toBeLessThan(1e-8);
     });
 
     it("ferma in ECI su Terra sferica: resta sulla stessa verticale inerziale", function () {
-        const simulation = createSimulation({ absolute: { speedKmh: 0 } });
+        const simulation = createSimulation({ eci: { speedKmh: 0 } });
         const particle = simulation.particle;
         const start = Cesium.Cartesian3.clone(particle.initial.position);
         for (let t = 100; t <= 40000; t += 100) {

@@ -34,8 +34,8 @@ const VELOCITY_ROWS = [
 
 // Colonne della velocità iniziale: [terna, suffisso dell'etichetta].
 const VELOCITY_COLUMNS = [
-    ["relative", "relativa (ECEF)"],
-    ["absolute", "assoluta (ECI)"]
+    ["ecef", "relativa (ECEF)"],
+    ["eci", "assoluta (ECI)"]
 ];
 
 // Righe della sezione Visualizzazione: [etichetta, oggetto].

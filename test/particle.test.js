@@ -5,11 +5,12 @@
 
 import { describe, it, expect } from "vitest";
 import * as Cesium from "cesium";
-import { OMEGA, eciToEcef, enuRotation } from "../src/geometry/referenceFrames.js";
+import { enuRotation } from "../src/geometry/referenceFrames.js";
 import { EARTH_RADIUS, SPHERICAL_EARTH } from "../src/model/earth.js";
 import { DEFAULT_PARTICLE_RADIUS, Particle } from "../src/model/particle.js";
+import { OMEGA, RotationAxis } from "../src/model/rotationAxis.js";
 import { TRAJECTORY_MIN_DISTANCE, Trajectory } from "../src/model/trajectory.js";
-import { createParticle } from "./helpers.js";
+import { createParticle, earthOf, eciToEcef } from "./helpers.js";
 
 function dragVelocity(r) {
     return new Cesium.Cartesian3(-OMEGA * r.y, OMEGA * r.x, 0);
@@ -17,47 +18,47 @@ function dragVelocity(r) {
 
 describe("condizioni iniziali", function () {
     it("predefinite: punto di riserva, quota 0, velocità relativa nulla", function () {
-        const particle = new Particle();
+        const particle = new Particle(new RotationAxis());
         expect(particle.radius).toBe(DEFAULT_PARTICLE_RADIUS);
-        expect(particle.start.latitudeDeg).toBe(45);
-        expect(particle.start.longitudeDeg).toBe(7.1);
+        expect(particle.startPoint.latitudeDeg).toBe(45);
+        expect(particle.startPoint.longitudeDeg).toBe(7.1);
         expect(particle.start.altitude).toBe(0);
-        expect(particle.velocityMaster).toBe("relative");
-        expect(particle.velocity.relative.speedKmh).toBe(0);
+        expect(particle.velocityMaster).toBe("ecef");
+        expect(particle.velocity.ecef.speedKmh).toBe(0);
     });
 
     it("la latitudine è limitata a ±90° e la longitudine avvolta in [0°, 360°)", function () {
-        const particle = new Particle();
+        const particle = new Particle(new RotationAxis());
         particle.setStartPoint(120, -10);
-        expect(particle.start.latitudeDeg).toBe(90);
-        expect(particle.start.longitudeDeg).toBe(350);
+        expect(particle.startPoint.latitudeDeg).toBe(90);
+        expect(particle.startPoint.longitudeDeg).toBe(350);
         particle.setStartPoint(-95, 370);
-        expect(particle.start.latitudeDeg).toBe(-90);
-        expect(particle.start.longitudeDeg).toBeCloseTo(10, 12);
+        expect(particle.startPoint.latitudeDeg).toBe(-90);
+        expect(particle.startPoint.longitudeDeg).toBeCloseTo(10, 12);
     });
 
     it("il punto sulla superficie segue latitudine e longitudine", function () {
-        const particle = new Particle();
+        const particle = new Particle(new RotationAxis());
         particle.setStartPoint(30, 100);
         const expected = Cesium.Cartesian3.fromDegrees(100, 30, 0);
-        expect(Cesium.Cartesian3.distance(particle.start.surfacePointECEF, expected)).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(particle.startPoint.position, expected)).toBeLessThan(1e-6);
     });
 
     it("la quota non è negativa", function () {
-        const particle = new Particle();
+        const particle = new Particle(new RotationAxis());
         particle.setStartAltitude(-5000);
         expect(particle.start.altitude).toBe(0);
     });
 
     it("velocità: modulo non negativo, azimuth avvolto, elevazione limitata", function () {
-        const particle = new Particle();
-        particle.setVelocity("absolute", { speedKmh: -10, azimuthDeg: -1, elevationDeg: 120 });
-        expect(particle.velocity.absolute).toEqual({ speedKmh: 0, azimuthDeg: 359, elevationDeg: 90 });
-        expect(particle.velocityMaster).toBe("absolute");
+        const particle = new Particle(new RotationAxis());
+        particle.setVelocity("eci",{ speedKmh: -10, azimuthDeg: -1, elevationDeg: 120 });
+        expect(particle.velocity.eci).toEqual({ speedKmh: 0, azimuthDeg: 359, elevationDeg: 90 });
+        expect(particle.velocityMaster).toBe("eci");
     });
 
     it("il raggio è solo quello della sfera disegnata: il baricentro sta sulla superficie", function () {
-        const particle = new Particle(1000);
+        const particle = new Particle(new RotationAxis(), 1000);
         particle.setStartAltitude(0);
         particle.reset(SPHERICAL_EARTH);
         expect(Cesium.Cartesian3.magnitude(particle.initial.position)).toBeCloseTo(EARTH_RADIUS, 6);
@@ -102,17 +103,17 @@ describe("stato iniziale", function () {
 describe("velocità iniziale relativa (ECEF) e assoluta (ECI)", function () {
     function expectCoherent(particle) {
         const expected = Cesium.Cartesian3.add(
-            particle.initial.velocityECEF,
+            particle.initial.velocity.ecef,
             dragVelocity(particle.initial.position),
             new Cesium.Cartesian3()
         );
-        expect(Cesium.Cartesian3.distance(particle.initial.velocityECI, expected)).toBeLessThan(1e-9);
+        expect(Cesium.Cartesian3.distance(particle.initial.velocity.eci, expected)).toBeLessThan(1e-9);
     }
 
     it("relativa nulla: l'assoluta è la velocità di trascinamento ω·ρ verso Est", function () {
         const particle = createParticle();
         const r = particle.initial.position;
-        const absolute = particle.velocity.absolute;
+        const absolute = particle.velocity.eci;
         expect(absolute.speedKmh).toBeCloseTo(OMEGA * Math.hypot(r.x, r.y) * 3.6, 6);
         expect(absolute.azimuthDeg).toBeCloseTo(90, 9);
         expect(absolute.elevationDeg).toBeCloseTo(0, 9);
@@ -120,9 +121,9 @@ describe("velocità iniziale relativa (ECEF) e assoluta (ECI)", function () {
     });
 
     it("assoluta nulla: la relativa ha lo stesso modulo verso Ovest", function () {
-        const particle = createParticle({ absolute: { speedKmh: 0 } });
-        expect(Cesium.Cartesian3.magnitude(particle.initial.velocityECI)).toBe(0);
-        expect(particle.velocity.relative.azimuthDeg).toBeCloseTo(270, 9);
+        const particle = createParticle({ eci: { speedKmh: 0 } });
+        expect(Cesium.Cartesian3.magnitude(particle.initial.velocity.eci)).toBe(0);
+        expect(particle.velocity.ecef.azimuthDeg).toBeCloseTo(270, 9);
         expectCoherent(particle);
     });
 
@@ -131,41 +132,41 @@ describe("velocità iniziale relativa (ECEF) e assoluta (ECI)", function () {
         { speedKmh: 20000, azimuthDeg: 180, elevationDeg: -10 },
         { speedKmh: 5, azimuthDeg: 300, elevationDeg: 80 }
     ])("v_ECI = v_ECEF + ω × r (relativa %o)", function (relative) {
-        const particle = createParticle({ relative });
-        expect(Cesium.Cartesian3.magnitude(particle.initial.velocityECEF) * 3.6)
+        const particle = createParticle({ ecef: relative });
+        expect(Cesium.Cartesian3.magnitude(particle.initial.velocity.ecef) * 3.6)
             .toBeCloseTo(relative.speedKmh, 6);
         expectCoherent(particle);
     });
 
     it("partendo dall'assoluta calcolata si ritrova la relativa impostata", function () {
-        const first = createParticle({ relative: { speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
-        const second = createParticle({ absolute: { ...first.velocity.absolute } });
-        expect(second.velocity.relative.speedKmh).toBeCloseTo(1000, 6);
-        expect(second.velocity.relative.azimuthDeg).toBeCloseTo(45, 6);
-        expect(second.velocity.relative.elevationDeg).toBeCloseTo(30, 6);
+        const first = createParticle({ ecef: {speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
+        const second = createParticle({ eci: { ...first.velocity.eci } });
+        expect(second.velocity.ecef.speedKmh).toBeCloseTo(1000, 6);
+        expect(second.velocity.ecef.azimuthDeg).toBeCloseTo(45, 6);
+        expect(second.velocity.ecef.elevationDeg).toBeCloseTo(30, 6);
     });
 
     it("la velocità relativa dello stato iniziale coincide con quella impostata", function () {
-        const particle = createParticle({ relative: { speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
-        const rel = particle.velocityArrows.ecef.value();
-        expect(Cesium.Cartesian3.distance(rel, particle.initial.velocityECEF)).toBeLessThan(1e-9);
+        const particle = createParticle({ ecef: {speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
+        const rel = particle.velocityArrows.ecef.value(0);
+        expect(Cesium.Cartesian3.distance(rel, particle.initial.velocity.ecef)).toBeLessThan(1e-9);
     });
 });
 
 describe("frecce della velocità", function () {
     it("assoluto = v, relativo = v - ω × r, e seguono lo stato corrente", function () {
-        const particle = createParticle({ relative: { speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
+        const particle = createParticle({ ecef: {speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
         particle.state.velocity.z += 50;
         const { position, velocity } = particle.state;
         const expectedRelative = Cesium.Cartesian3.subtract(velocity, dragVelocity(position), new Cesium.Cartesian3());
-        expect(Cesium.Cartesian3.equals(particle.velocityArrows.eci.value(), velocity)).toBe(true);
-        expect(Cesium.Cartesian3.distance(particle.velocityArrows.ecef.value(), expectedRelative)).toBeLessThan(1e-9);
+        expect(Cesium.Cartesian3.equals(particle.velocityArrows.eci.value(0), velocity)).toBe(true);
+        expect(Cesium.Cartesian3.distance(particle.velocityArrows.ecef.value(0), expectedRelative)).toBeLessThan(1e-9);
     });
 
     it("in ECEF: applicate nel centro della sfera e ruotate con la Terra", function () {
-        const particle = createParticle({ relative: { speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
+        const particle = createParticle({ ecef: {speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
         const t = 1800;
-        const { origin, vector } = particle.velocityArrows.eci.inEcef(t);
+        const { position: origin, vector } = particle.velocityArrows.eci.expressedIn(earthOf(particle), t);
         expect(Cesium.Cartesian3.distance(origin, eciToEcef(particle.state.sphereCenter, OMEGA * t))).toBeLessThan(1e-6);
         expect(Cesium.Cartesian3.distance(vector, eciToEcef(particle.state.velocity, OMEGA * t))).toBeLessThan(1e-9);
     });
@@ -176,7 +177,7 @@ describe("terne nel punto di partenza", function () {
         const particle = createParticle({ latitude: 30, longitude: 100 });
         const enu = enuRotation(particle.initial.normal);
         Object.values(particle.startFrames).forEach((frame) => {
-            const { origin, axes } = frame.inEcef(0);
+            const { position: origin, axes } = frame.poseIn(earthOf(particle), 0);
             expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
             axes.forEach((axis, i) => {
                 const expected = Cesium.Matrix3.getColumn(enu, i, new Cesium.Cartesian3());
@@ -201,25 +202,25 @@ describe("terne nel punto di partenza", function () {
     it("vista dalla Terra, la terna ECEF resta ferma e quella ECI ruota", function () {
         const particle = createParticle();
         const t = 3600;
-        const ecef = particle.startFrames.ecef.inEcef(t);
-        const eci = particle.startFrames.eci.inEcef(t);
-        expect(Cesium.Cartesian3.distance(ecef.origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
+        const ecef = particle.startFrames.ecef.poseIn(earthOf(particle), t);
+        const eci = particle.startFrames.eci.poseIn(earthOf(particle), t);
+        expect(Cesium.Cartesian3.distance(ecef.position, particle.initial.sphereCenter)).toBeLessThan(1e-6);
         const rotated = eciToEcef(particle.initial.sphereCenter, OMEGA * t);
-        expect(Cesium.Cartesian3.distance(eci.origin, rotated)).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(eci.position, rotated)).toBeLessThan(1e-6);
     });
 
     it("seguono il punto di partenza al reset", function () {
         const particle = createParticle();
         particle.setStartPoint(-20, 200);
         particle.reset(SPHERICAL_EARTH);
-        const { origin } = particle.startFrames.ecef.inEcef(0);
+        const { position: origin } = particle.startFrames.ecef.poseIn(earthOf(particle), 0);
         expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
     });
 });
 
 describe("traiettorie", function () {
     it("scartano i punti più vicini di TRAJECTORY_MIN_DISTANCE all'ultimo", function () {
-        const trajectory = new Trajectory("eci");
+        const trajectory = new Trajectory();
         trajectory.addPoint(new Cesium.Cartesian3(0, 0, 0));
         trajectory.addPoint(new Cesium.Cartesian3(TRAJECTORY_MIN_DISTANCE / 2, 0, 0));
         trajectory.addPoint(new Cesium.Cartesian3(TRAJECTORY_MIN_DISTANCE, 0, 0));
@@ -227,7 +228,7 @@ describe("traiettorie", function () {
     });
 
     it("conservano copie dei punti e clear aumenta la revisione", function () {
-        const trajectory = new Trajectory("ecef");
+        const trajectory = new Trajectory();
         const p = new Cesium.Cartesian3(1, 2, 3);
         trajectory.addPoint(p);
         p.x = 100;

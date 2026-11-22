@@ -1,5 +1,10 @@
 // ============================================================
-// earth.js — Modelli di Terra usati da gravità e urti.
+// earth.js — Terra: nodo della scena e modelli di Terra usati da
+// gravità e urti.
+//
+// Earth è il nodo della scena "Terra", figlio di World: il suo sistema
+// di coordinate è ECEF, che ruota rispetto a World (ECI) attorno
+// all'asse di rotazione. Contiene il modello di Terra attivo.
 //
 // Ogni modello è una strategia con la stessa forma:
 //   gravity(position, result)            accelerazione [m/s²]
@@ -9,10 +14,9 @@
 //       undefined se non definita
 //   pointAboveSurface(surfacePoint, height, result)
 //       punto a "height" metri sopra "surfacePoint", lungo la normale
-//   rotationAxis                         asse di rotazione terrestre
 //
-// La simulazione sceglie il modello e non contiene "if" sul tipo di
-// Terra.
+// La Terra sceglie il modello e la simulazione non contiene "if" sul
+// tipo di Terra.
 //
 // TERRA SFERICA
 // - Gravità: legge di gravitazione universale, a = -GM·r/|r|³.
@@ -35,7 +39,7 @@
 // ============================================================
 
 import * as Cesium from "cesium";
-import { EARTH_ROTATION_AXIS, OMEGA } from "../geometry/referenceFrames.js";
+import { SceneNode } from "./sceneNode.js";
 
 export const GM = 3.986004418e14;              // G·M terrestre [m³/s²]
 export const EARTH_RADIUS = 6371008.8;          // Raggio medio (IUGG) [m]
@@ -55,21 +59,10 @@ function legendre4(s) {
     return (35 * s2 * s2 - 30 * s2 + 3) / 8;
 }
 
-// Comune ai due modelli: la Terra ruota attorno all'asse Z (verso il
-// Polo Nord) con velocità angolare OMEGA [rad/s]. Sono gli stessi
-// valori su cui sono definiti i sistemi ECI ed ECEF in
-// referenceFrames.js, così scena e conversioni non possono divergere.
-export const ROTATION_AXIS = Object.freeze({
-    direction: EARTH_ROTATION_AXIS,
-    angularVelocity: OMEGA
-});
-
 const scratchSurfacePoint = new Cesium.Cartesian3();
 const scratchSurfaceOffset = new Cesium.Cartesian3();
 
 export const SPHERICAL_EARTH = {
-    rotationAxis: ROTATION_AXIS,
-
     // Massa puntiforme: a = -GM·r/|r|³.
     gravity(position, result) {
         const r2 = Cesium.Cartesian3.magnitudeSquared(position);
@@ -99,8 +92,6 @@ export const SPHERICAL_EARTH = {
 };
 
 export const ELLIPSOIDAL_EARTH = {
-    rotationAxis: ROTATION_AXIS,
-
     // Massa puntiforme corretta dai termini J2 e J4 (asse di simmetria
     // Z), con s = z/r e q = (Re/r)²:
     //   ax,y = a_pm · [1 + 3/2·J2·q·(1 - 5s²) - 5/8·J4·q²·(3 - 42s² + 63s⁴)]
@@ -150,3 +141,34 @@ export const ELLIPSOIDAL_EARTH = {
         return Cesium.Cartesian3.add(surface, result, result);
     }
 };
+
+const scratchRotation = new Cesium.Quaternion();
+
+// Nodo della scena "Terra" (sistema ECEF).
+export class Earth extends SceneNode {
+    // Modello di Terra attivo: sfera (true) o ellissoide WGS84 con J2 e
+    // J4 (false).
+    spherical = true;
+
+    #rotationAxis; // RotationAxis, fratello della Terra sotto World
+
+    // "rotationAxis": asse attorno al quale ruota.
+    constructor(rotationAxis) {
+        super();
+        this.#rotationAxis = rotationAxis;
+    }
+
+    // Modello di Terra attivo (SPHERICAL_EARTH o ELLIPSOIDAL_EARTH).
+    get model() {
+        return this.spherical ? SPHERICAL_EARTH : ELLIPSOIDAL_EARTH;
+    }
+
+    // Assi ECEF nel sistema di World (il padre): ruotati dell'angolo di
+    // cui la Terra ha ruotato attorno all'asse. L'origine resta nel
+    // centro della Terra.
+    localOrientation(seconds, result = new Cesium.Matrix3()) {
+        const axis = this.#rotationAxis;
+        Cesium.Quaternion.fromAxisAngle(axis.direction, axis.angle(seconds), scratchRotation);
+        return Cesium.Matrix3.fromQuaternion(scratchRotation, result);
+    }
+}

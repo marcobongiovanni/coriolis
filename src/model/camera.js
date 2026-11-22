@@ -1,61 +1,61 @@
 // ============================================================
-// camera.js — Telecamera: punto di vista sulla scena, fermo nel
-// sistema di riferimento "system":
-//   "eci":  ferma nello spazio inerziale (la Terra ruota sullo schermo);
-//   "ecef": solidale con la Terra (la Terra appare immobile).
+// camera.js — Telecamera: punto di vista sulla scena.
 //
-// La posa (posizione, direzione di vista e Up) è conservata nel sistema
-// della telecamera, quindi resta costante finché l'utente non la
-// sposta; inEcef() la restituisce in ECEF, il sistema in cui Cesium
-// disegna la scena.
+// È un nodo della scena il cui sistema è quello della telecamera:
+//   origine  posizione della telecamera;
+//   asse X   direzione di vista;
+//   asse Y   Up;
+//   asse Z   destra (X × Y).
+// La posa è costante nel sistema del padre:
+//   figlia di World (Telecamera ECI): ferma nello spazio inerziale (la
+//     Terra ruota sullo schermo);
+//   figlia della Terra (Telecamera ECEF): solidale con la Terra (la
+//     Terra appare immobile).
+// expressedIn() la restituisce nelle coordinate di un altro nodo (per
+// esempio la Terra, il sistema in cui Cesium disegna).
 // ============================================================
 
 import * as Cesium from "cesium";
-import { ecefToEci, eciToEcef, systemToEcefAngle } from "../geometry/referenceFrames.js";
 import { startPointFraming } from "./cameraFraming.js";
+import { SceneNode } from "./sceneNode.js";
 
-export class Camera {
-    system; // "eci" o "ecef"
-
-    // Posa nel sistema della telecamera; direzione e Up sono versori.
-    position = new Cesium.Cartesian3();
-    direction = new Cesium.Cartesian3();
-    up = new Cesium.Cartesian3();
-
+export class Camera extends SceneNode {
     // Diventa vero quando l'utente sposta la telecamera: da quel
     // momento l'inquadratura automatica non la tocca più.
     movedByUser = false;
 
-    constructor(system) {
-        this.system = system;
+    // Direzione di vista nel sistema del padre (versore, copia).
+    get direction() {
+        return this.axes[0];
     }
 
-    // Posa { position, direction, up } in ECEF all'istante "seconds"
-    // (copie).
-    inEcef(seconds) {
-        const angle = systemToEcefAngle(this.system, seconds);
-        return {
-            position: eciToEcef(this.position, angle),
-            direction: eciToEcef(this.direction, angle),
-            up: eciToEcef(this.up, angle)
-        };
+    // Up nel sistema del padre (versore, copia).
+    get up() {
+        return this.axes[1];
+    }
+
+    // Posa { position, direction, up } nelle coordinate del nodo "node"
+    // all'istante "seconds" (copie).
+    expressedIn(node, seconds) {
+        const { position, axes: [direction, up] } = this.poseIn(node, seconds);
+        return { position: position, direction: direction, up: up };
     }
 
     // Imposta la posa da una posa { position, direction, up } espressa
-    // in ECEF all'istante "seconds".
-    setFromEcef(pose, seconds) {
+    // nelle coordinate del nodo "node" all'istante "seconds". Up viene
+    // reso ortogonale alla direzione.
+    setFrom(node, pose, seconds) {
         const C3 = Cesium.Cartesian3;
-        const angle = systemToEcefAngle(this.system, seconds);
-        ecefToEci(pose.position, angle, this.position);
-        C3.normalize(ecefToEci(pose.direction, angle, this.direction), this.direction);
-        C3.normalize(ecefToEci(pose.up, angle, this.up), this.up);
+        const direction = C3.normalize(pose.direction, new C3());
+        const right = C3.normalize(C3.cross(direction, pose.up, new C3()), new C3());
+        const up = C3.cross(right, direction, new C3());
+        this.setPoseFrom(node, pose.position, [direction, up, right], seconds);
     }
 
-    // Inquadratura iniziale (vedi cameraFraming.js): "target" (centro
-    // della sfera della particella) visto nella terna locale con
-    // verticale "normal" (normale locale nel punto di partenza). Valida
-    // a t = 0, quando ECI ed ECEF coincidono.
-    frameStartPoint(normal, target, tanHalfFovWidth) {
-        this.setFromEcef(startPointFraming(normal, target, tanHalfFovWidth), 0);
+    // Inquadratura iniziale (vedi cameraFraming.js): l'origine della
+    // terna locale "frame" (centro della sfera della particella) vista
+    // da una direzione fissa nella terna, a t = 0.
+    frameStartPoint(frame, tanHalfFovWidth) {
+        this.setFrom(frame.parent, startPointFraming(frame, tanHalfFovWidth), 0);
     }
 }

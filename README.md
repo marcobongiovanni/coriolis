@@ -35,14 +35,17 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 
 | Percorso | Livello | Contenuto |
 |---|---|---|
-| `src/geometry/referenceFrames.js` | condiviso | Funzioni pure: conversioni ECI/ECEF, rotazione e direzioni della terna Est-Nord-Su, angoli. |
-| `src/model/earth.js` | Model | Modelli di Terra (sfera, ellissoide WGS84 con J2 e J4): gravità, potenziale, superficie, asse di rotazione. |
+| `src/geometry/referenceFrames.js` | condiviso | Funzioni pure: rotazione e direzioni della terna Est-Nord-Su, velocità in un sistema rotante, angoli. |
+| `src/model/sceneNode.js` | Model | `SceneNode`: nodo della gerarchia della scena (padre-figlio), da cui discendono tutti gli elementi del modello che corrispondono a oggetti della scena; posa di ogni nodo (origine e assi nel sistema del padre) e trasformazioni tra i sistemi dei nodi. |
+| `src/model/earth.js` | Model | `Earth`: nodo "Terra" (sistema ECEF) con il modello di Terra attivo; modelli di Terra (sfera, ellissoide WGS84 con J2 e J4): gravità, potenziale, superficie. |
+| `src/model/rotationAxis.js` | Model | `RotationAxis`: asse di rotazione terrestre e velocità angolare (unica definizione della rotazione terrestre), velocità di trascinamento e relativa. |
+| `src/model/startPoint.js` | Model | `StartPoint`: punto di partenza sulla superficie (latitudine, longitudine, posizione). |
 | `src/model/particle.js` | Model | `Particle`: punto materiale (baricentro nel punto di contatto) disegnato come sfera; condizioni iniziali e loro regole di validità, stato iniziale e corrente, frecce della velocità, terne e traiettorie. |
 | `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta e quella relativa). |
-| `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma in ECI o in ECEF; conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
-| `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della sfera della particella, in ECI o in ECEF. |
-| `src/model/camera.js`, `cameraFraming.js` | Model | `Camera`: telecamera ferma in ECI o in ECEF, con la sua posa e l'inquadratura iniziale. |
-| `src/model/simulation.js` | Model | `Simulation`: modello di Terra, tempo, integrazione e urti delle particelle, telecamere. |
+| `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma nel sistema del padre (World o Terra); conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
+| `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della sfera della particella, nel sistema del padre (World o Terra). |
+| `src/model/camera.js`, `cameraFraming.js` | Model | `Camera`: telecamera ferma nel sistema del padre (World o Terra), con la sua posa e l'inquadratura iniziale. |
+| `src/model/simulation.js` | Model | `Simulation`: gerarchia della scena, tempo, integrazione e urti delle particelle. |
 | `src/services/interfaces.js` | servizi | Interfacce `SimulationClock` e `GeolocationService`. |
 | `src/services/cesiumClock.js`, `browserGeolocation.js` | servizi | Implementazioni con l'orologio di Cesium e la Geolocation API. |
 | `src/viewmodel/simulationViewModel.js` | ViewModel | Stato mostrato, comandi, regole dell'interfaccia (es. controlli bloccati durante la simulazione), stato di ogni istante in coordinate ECEF. |
@@ -60,17 +63,38 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 | `dist/` | | File generati (non modificarli a mano). |
 | `docs/` | | Sito per GitHub Pages, generato da `npm run pages`. |
 
-Ogni tipo di elemento della scena corrisponde a un elemento del modello:
+Ogni tipo di elemento della scena corrisponde a un elemento del modello,
+che discende da `SceneNode`:
 
 | Elemento della scena | Elemento del modello |
 |---|---|
+| Terra | `Earth` (`simulation.earth`) |
 | Particella | `Particle` (`state.position`, `radius`) |
 | Frecce della velocità assoluta e relativa | `Arrow` (`particle.velocityArrows`) |
-| Punto di partenza | `Particle` (`start`) |
-| Traiettorie ECI ed ECEF | `Trajectory` (`particle.trajectories`) |
-| Terne ECI ed ECEF nel punto di partenza | `EnuFrame` (`particle.startFrames`) |
-| Asse di rotazione | `rotationAxis` del modello di Terra |
+| Punto di partenza | `StartPoint` (`particle.startPoint`) |
+| Traiettorie assoluta e relativa | `Trajectory` (`particle.trajectories`) |
+| Terne locali assoluta e relativa | `EnuFrame` (`particle.startFrames`) |
+| Asse di rotazione | `RotationAxis` (`simulation.rotationAxis`) |
 | Telecamere ECI ed ECEF | `Camera` (`simulation.cameras`) |
+
+Gli elementi formano una gerarchia padre-figlio con radice World (il
+sistema ECI); ogni nodo ha la posa espressa nel sistema del padre:
+
+```text
+World (ECI)
+├── Terra (ECEF, ruota attorno all'asse di rotazione)
+│   ├── terna locale relativa
+│   ├── traiettoria relativa
+│   ├── freccia della velocità relativa
+│   ├── Telecamera ECEF
+│   └── punto di partenza
+├── asse di rotazione
+├── particella
+├── terna locale assoluta
+├── traiettoria assoluta
+├── freccia della velocità assoluta
+└── Telecamera ECI
+```
 
 La vista decide solo come disegnarli (colori, spessori, lunghezza a
 schermo); i dati vengono dal modello attraverso il ViewModel.
@@ -183,21 +207,24 @@ Dipendenze consentite (ogni livello conosce solo quelli alla sua destra):
 ## Test
 
 **Unitari del modello**:
-- `test/geometry.test.js`: trasformazioni ECI/ECEF, angoli;
+- `test/geometry.test.js`: terna Est-Nord-Su, velocità in un sistema
+  rotante, angoli;
 - `test/enuFrame.test.js`: conversioni della velocità tra componenti
   ENU e modulo/azimuth/elevazione;
 - `test/particle.test.js`: regole di validità delle condizioni
   iniziali, stato iniziale, coerenza tra velocità relativa e assoluta
   (`v_ECI = v_ECEF + ω × r`), frecce della velocità, terne nel punto di
   partenza, traiettorie;
+- `test/sceneNode.test.js`: relazioni padre-figlio, trasformazioni tra
+  i sistemi dei nodi, gerarchia della scena della simulazione;
 - `test/camera.test.js`: posa delle telecamere ferma in ECI o in ECEF,
   inquadratura iniziale;
 - `test/simulation.test.js`: gravità con e senza J2 e J4, superficie, asse
   di rotazione, registrazione della traiettoria, conservazione
   dell'energia, rimbalzi, deriva su Terra sferica ed ellissoidale.
 
-`test/helpers.js` contiene gli strumenti comuni per configurare
-particelle e simulazioni.
+`test/helpers.js` contiene gli strumenti comuni per creare la gerarchia
+minima della scena e configurare particelle e simulazioni.
 
 **Unitari del ViewModel** (`test/viewModel.test.js`, senza browser, con
 orologio e geolocalizzazione finti): play/pausa e blocco dei controlli,

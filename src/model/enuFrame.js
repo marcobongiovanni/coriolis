@@ -3,15 +3,17 @@
 // L'asse Su è la normale locale del modello di Terra: radiale per la
 // Terra sferica, geodetica per quella ellissoidale.
 //
-// A t = 0 i sistemi ECI ed ECEF coincidono, quindi origine e assi sono
-// gli stessi in entrambi. Poi la terna:
-//   "ecef": resta solidale con la Terra (ferma in ECEF);
-//   "eci":  resta ferma nello spazio inerziale (ferma in ECI) e, vista
-//           dalla Terra, ruota all'indietro dell'angolo di rotazione
-//           terrestre.
+// È un nodo della scena il cui sistema è la terna stessa: origine e
+// assi Est, Nord, Su sono la posa del nodo, costante nel sistema del
+// padre. Quindi la terna:
+//   figlia di World (terna locale assoluta): resta ferma nello spazio
+//     inerziale e, vista dalla Terra, ruota all'indietro dell'angolo di
+//     rotazione terrestre;
+//   figlia della Terra (terna locale relativa): resta solidale con la
+//     Terra.
 //
 // toCartesian/toLocal convertono un vettore tra componenti nella terna
-// e coordinate cartesiane del sistema della terna; i metodi statici
+// e coordinate cartesiane del sistema del padre; i metodi statici
 // convertono una velocità tra componenti nella terna e
 // modulo/azimuth/elevazione.
 // ============================================================
@@ -20,57 +22,40 @@ import * as Cesium from "cesium";
 import {
     KMH_PER_MS,
     directionEnu,
-    eciToEcef,
     enuRotation,
-    normalizeDegrees,
-    systemToEcefAngle
+    normalizeDegrees
 } from "../geometry/referenceFrames.js";
+import { SceneNode } from "./sceneNode.js";
 
-export class EnuFrame {
-    system; // "eci" o "ecef"
+export class EnuFrame extends SceneNode {
+    #scratchTranspose = new Cesium.Matrix3();
 
-    // Nel sistema della terna (costanti dopo placeAt).
-    origin = new Cesium.Cartesian3();
-    axes = [new Cesium.Cartesian3(), new Cesium.Cartesian3(), new Cesium.Cartesian3()]; // E, N, U
-
-    #rotation = new Cesium.Matrix3();
-
-    constructor(system) {
-        this.system = system;
+    // Porta l'origine in "origin" e orienta gli assi verso Est, Nord e
+    // Su, con Su lungo il versore "up" (la normale locale del modello di
+    // Terra nel punto). "origin" e "up" sono nelle coordinate del nodo
+    // "source" all'istante "seconds" (senza "source": già nel sistema
+    // del padre).
+    placeAt(origin, up, source, seconds = 0) {
+        const enu = enuRotation(up);
+        const axes = [0, 1, 2].map((i) => Cesium.Matrix3.getColumn(enu, i, new Cesium.Cartesian3()));
+        if (source) {
+            this.setPoseFrom(source, origin, axes, seconds);
+        } else {
+            this.setPose(origin, axes);
+        }
     }
 
-    // Porta l'origine in "origin" (a t = 0) e orienta gli assi verso
-    // Est, Nord e Su, con Su lungo il versore "up" (la normale locale
-    // del modello di Terra nel punto).
-    placeAt(origin, up) {
-        Cesium.Cartesian3.clone(origin, this.origin);
-        enuRotation(up, this.#rotation);
-        this.axes.forEach((axis, i) => Cesium.Matrix3.getColumn(this.#rotation, i, axis));
-    }
-
-    // Origine e assi in coordinate ECEF all'istante "seconds" (copie).
-    inEcef(seconds) {
-        const angle = systemToEcefAngle(this.system, seconds);
-        return {
-            origin: eciToEcef(this.origin, angle),
-            axes: this.axes.map((axis) => eciToEcef(axis, angle))
-        };
-    }
-
-    // Componenti E, N, U di un vettore -> coordinate cartesiane.
+    // Componenti E, N, U di un vettore -> coordinate cartesiane nel
+    // sistema del padre.
     toCartesian(local, result = new Cesium.Cartesian3()) {
-        return Cesium.Matrix3.multiplyByVector(this.#rotation, local, result);
+        return Cesium.Matrix3.multiplyByVector(this.orientation, local, result);
     }
 
-    // Coordinate cartesiane di un vettore -> componenti E, N, U.
+    // Coordinate cartesiane di un vettore nel sistema del padre ->
+    // componenti E, N, U.
     toLocal(vector, result = new Cesium.Cartesian3()) {
-        const [east, north, up] = this.axes;
-        return Cesium.Cartesian3.fromElements(
-            Cesium.Cartesian3.dot(vector, east),
-            Cesium.Cartesian3.dot(vector, north),
-            Cesium.Cartesian3.dot(vector, up),
-            result
-        );
+        const transpose = Cesium.Matrix3.transpose(this.orientation, this.#scratchTranspose);
+        return Cesium.Matrix3.multiplyByVector(transpose, vector, result);
     }
 
     // --------------------------------------------------

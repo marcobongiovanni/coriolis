@@ -187,7 +187,7 @@ test.describe("con la posizione geografica consentita", () => {
     test("la particella parte dalla posizione del PC", async ({ page }) => {
         const errors = await openApp(page);
         await expect.poll(() => page.evaluate(() => {
-            const s = window.__coriolis.particle.start;
+            const s = window.__coriolis.particle.startPoint;
             return [s.latitudeDeg, s.longitudeDeg];
         })).toEqual([41.9, 12.5]);
         await expect(page.getByLabel("Latitudine [°]")).toHaveValue("41.9");
@@ -279,7 +279,7 @@ test("la longitudine è ciclica tra 0° e 359°", async ({ page }) => {
     await longitude.press("ArrowUp");
     await expect(longitude).toHaveValue("1");
 
-    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.start.longitudeDeg);
+    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.startPoint.longitudeDeg);
     expect(longitudeDeg).toBe(1);
 });
 
@@ -328,8 +328,8 @@ test("le caselle di Visualizzazione nascondono e mostrano gli oggetti", async ({
     const isShown = () => page.evaluate(() => {
         const s = window.__coriolis;
         return {
-            arrowEci: s.arrows.absolute.show,
-            arrowEcef: s.arrows.relative.show,
+            arrowEci: s.arrows.eci.show,
+            arrowEcef: s.arrows.ecef.show,
             frameEci: s.frames.eci.every((p) => p.show),
             frameEcef: s.frames.ecef.every((p) => p.show)
         };
@@ -610,7 +610,10 @@ test("stato: la Posizione della particella si aggiorna durante la simulazione", 
 
     // A t = 0 la particella è sul punto di partenza.
     const start = await position();
-    const startPoint = await page.evaluate(() => window.__coriolis.particle.start);
+    const startPoint = await page.evaluate(() => {
+        const s = window.__coriolis.particle.startPoint;
+        return { latitudeDeg: s.latitudeDeg, longitudeDeg: s.longitudeDeg };
+    });
     expect(start.lat).toBeCloseTo(startPoint.latitudeDeg, 1);
     expect(start.lon).toBeCloseTo(startPoint.longitudeDeg, 1);
 
@@ -632,7 +635,7 @@ test("modello di Terra: Sfera (predefinito) o Ellissoide", async ({ page }) => {
     const errors = await openApp(page);
     const sphere = page.getByLabel("Sfera", { exact: true });
     const ellipsoid = page.getByLabel("Ellissoide");
-    const useSpherical = () => page.evaluate(() => window.__coriolis.simulation.useSphericalEarth);
+    const useSpherical = () => page.evaluate(() => window.__coriolis.simulation.earth.spherical);
 
     await expect(sphere).toBeChecked();
     await expect(ellipsoid).not.toBeChecked();

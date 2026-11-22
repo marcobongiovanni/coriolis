@@ -9,7 +9,7 @@ import { EnuFrame } from "../src/model/enuFrame.js";
 
 describe("componenti ENU <-> coordinate cartesiane", function () {
     it("toLocal annulla toCartesian e gli assi sono Est, Nord, Su", function () {
-        const frame = new EnuFrame("ecef");
+        const frame = new EnuFrame();
         const origin = Cesium.Cartesian3.fromDegrees(30, 45, 1000);
         frame.placeAt(origin, Cesium.Cartesian3.normalize(origin, new Cesium.Cartesian3()));
         const local = new Cesium.Cartesian3(3, -4, 5);

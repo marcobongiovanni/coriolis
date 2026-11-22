@@ -6,7 +6,8 @@
 // del semiangolo del campo visivo lungo la larghezza.
 //
 // La telecamera guarda il centro della sfera della particella da una
-// direzione fissa nella terna locale Est-Nord-Su del punto di partenza:
+// direzione fissa nella terna locale Est-Nord-Su del punto di partenza
+// (EnuFrame della particella):
 //   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
 //   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
 // Il vettore Up sta nel piano formato dalla direzione di vista e dalla
@@ -18,7 +19,7 @@
 // ============================================================
 
 import * as Cesium from "cesium";
-import { directionEnu, enuRotation } from "../geometry/referenceFrames.js";
+import { directionEnu } from "../geometry/referenceFrames.js";
 
 const CAMERA_AZIMUTH_DEG = 150;    // Dal Nord, in senso orario [°]
 const CAMERA_ELEVATION_DEG = 45;   // Sopra l'orizzonte locale [°]
@@ -83,18 +84,17 @@ function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
     return cameraAt(far, new Cesium.Cartesian3());
 }
 
-// Posa { position, direction, up } che inquadra "target" (centro della sfera della
-// particella) nella terna locale con verticale "normal" (normale locale
-// del modello di Terra nel punto di partenza). Valida a t = 0, quando
-// ECI ed ECEF coincidono.
-export function startPointFraming(normal, target, tanHalfFovWidth) {
+// Posa { position, direction, up } che inquadra l'origine della terna
+// locale "frame" (EnuFrame con origine nel centro della sfera della
+// particella e asse Su lungo la normale locale), nel sistema del padre
+// della terna (World o Terra, con origine nel centro della Terra).
+export function startPointFraming(frame, tanHalfFovWidth) {
     const C3 = Cesium.Cartesian3;
-    const enu = enuRotation(normal);
+    const target = frame.position;
+    const normal = frame.axes[2];
 
     // Versore dalla particella verso la telecamera.
-    const offset = Cesium.Matrix3.multiplyByVector(
-        enu, directionEnu(CAMERA_AZIMUTH_DEG, CAMERA_ELEVATION_DEG), new C3()
-    );
+    const offset = frame.toCartesian(directionEnu(CAMERA_AZIMUTH_DEG, CAMERA_ELEVATION_DEG));
     C3.normalize(offset, offset);
     const direction = C3.negate(offset, new C3());
 

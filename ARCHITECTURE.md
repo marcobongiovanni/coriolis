@@ -13,7 +13,10 @@
 - view/panel: Code related to the user command panel.
 - view/scene: Code related to the 3D simulation scene.
 - viewmodel: Code related to the viewmodel.
-- model: Code related to the model (every type of element in the scene should have a corresponding model).
+- model: Code related to the model (every type of element 
+  in the scene should have a corresponding model; every 
+  element of the model that corresponds to a scene object 
+  must derive from SceneNode).
 - geometry: general-purpose geometric functions.
 - services: Code related to services.
 

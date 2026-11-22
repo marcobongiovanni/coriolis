@@ -2,11 +2,22 @@
 // simulation.js — Modello: particella che si muove attorno alla
 // Terra in rotazione.
 //
-// Contiene ciò che è comune a tutte le particelle: modello di Terra,
-// tempo simulato, integrazione e urti, e le due telecamere (ferma in
-// ECI e ferma in ECEF), che non partecipano alla dinamica. Lo stato e
-// le condizioni iniziali di ogni particella sono in Particle; i metodi
-// di integrazione ricevono la particella su cui agire.
+// Contiene ciò che è comune a tutte le particelle: la gerarchia della
+// scena, il tempo simulato, l'integrazione e gli urti. Lo stato e le
+// condizioni iniziali di ogni particella sono in Particle; i metodi di
+// integrazione ricevono la particella su cui agire.
+//
+// Gerarchia della scena (padre -> figli, vedi SceneNode):
+//   World (radice, coordinate ECI)
+//     -> Terra (coordinate ECEF, contiene il modello di Terra attivo)
+//          -> terna locale relativa, traiettoria relativa,
+//             freccia della velocità relativa, Telecamera ECEF,
+//             punto di partenza
+//     -> asse di rotazione
+//     -> particella
+//     -> terna locale assoluta, traiettoria assoluta,
+//        freccia della velocità assoluta, Telecamera ECI
+// Le telecamere non partecipano alla dinamica.
 //
 // Non dipende dal livello di presentazione (né Viewer, né DOM, né
 // orologio di Cesium): usa solo le classi matematiche di Cesium, quindi
@@ -22,8 +33,10 @@
 import * as Cesium from "cesium";
 import { bySystem } from "../geometry/referenceFrames.js";
 import { Camera } from "./camera.js";
-import { ELLIPSOIDAL_EARTH, SPHERICAL_EARTH } from "./earth.js";
+import { Earth } from "./earth.js";
 import { Particle } from "./particle.js";
+import { RotationAxis } from "./rotationAxis.js";
+import { SceneNode } from "./sceneNode.js";
 
 export const MAX_PHYSICS_STEP = 0.5;  // Passo massimo di integrazione [s]
 const MAX_SUBSTEPS = 20000;           // Limite di sicurezza per chiamata
@@ -31,14 +44,19 @@ const MAX_CONTACTS_PER_STEP = 5;      // Urti risolti in un singolo passo
 const CONTACT_BISECTIONS = 40;        // Iterazioni per l'istante di contatto
 
 export class Simulation {
-    // Modello di Terra usato da gravità e urti: sfera (true) o
-    // ellissoide WGS84 con J2 e J4 (false).
-    useSphericalEarth = true;
+    // Radice della gerarchia della scena (coordinate ECI).
+    world = new SceneNode();
 
-    particle = new Particle();
+    rotationAxis = new RotationAxis();
 
-    // Telecamere ferme in ECI e in ECEF. Il reset non le sposta.
-    cameras = bySystem((system) => new Camera(system));
+    // Terra: nodo ECEF con il modello usato da gravità e urti.
+    earth = new Earth(this.rotationAxis);
+
+    particle = new Particle(this.rotationAxis);
+
+    // Telecamere ECI (figlia di World) ed ECEF (figlia della Terra). Il
+    // reset non le sposta.
+    cameras = bySystem(() => new Camera());
 
     time = 0; // Istante simulato a cui si riferisce lo stato [s]
 
@@ -52,18 +70,33 @@ export class Simulation {
     };
 
     constructor() {
+        this.#buildScene();
         this.reset();
     }
 
-    // Modello di Terra attivo (vedi earth.js).
-    get earth() {
-        return this.useSphericalEarth ? SPHERICAL_EARTH : ELLIPSOIDAL_EARTH;
+    // Costruisce la gerarchia della scena (vedi l'intestazione del file).
+    #buildScene() {
+        const { world, earth, particle, cameras } = this;
+
+        world.addChild(earth);
+        world.addChild(this.rotationAxis);
+        world.addChild(particle);
+        world.addChild(particle.startFrames.eci);    // Terna locale assoluta
+        world.addChild(particle.trajectories.eci);   // Traiettoria assoluta
+        world.addChild(particle.velocityArrows.eci); // Freccia della velocità assoluta
+        world.addChild(cameras.eci);
+
+        earth.addChild(particle.startFrames.ecef);    // Terna locale relativa
+        earth.addChild(particle.trajectories.ecef);   // Traiettoria relativa
+        earth.addChild(particle.velocityArrows.ecef); // Freccia della velocità relativa
+        earth.addChild(cameras.ecef);
+        earth.addChild(particle.startPoint);
     }
 
     // Riporta la simulazione a t = 0, applicando le condizioni iniziali
     // correnti (modello di Terra e particelle).
     reset() {
-        this.particle.reset(this.earth);
+        this.particle.reset(this.earth.model);
         this.time = 0;
     }
 
@@ -87,7 +120,7 @@ export class Simulation {
         }
 
         this.time = target;
-        this.particle.updateDerivedState(this.earth);
+        this.particle.updateDerivedState(this.earth.model);
         this.particle.recordTrajectory(target);
     }
 
@@ -99,7 +132,7 @@ export class Simulation {
     // avvicinando (dopo il rimbalzo la velocità normale è positiva).
     #isCollidingInward(particle) {
         const n = this.#scratch.normal;
-        const c = particle.clearance(this.earth, n);
+        const c = particle.clearance(this.earth.model, n);
         if (!Cesium.defined(c) || c >= 0) {
             return false;
         }
@@ -111,7 +144,7 @@ export class Simulation {
     #reflectVelocity(particle) {
         const n = this.#scratch.normal;
         const v = particle.state.velocity;
-        particle.clearance(this.earth, n);
+        particle.clearance(this.earth.model, n);
         const vn = Cesium.Cartesian3.dot(v, n);
         if (vn < 0) {
             Cesium.Cartesian3.subtract(
@@ -172,7 +205,7 @@ export class Simulation {
     //   v += ½·(a0 + a1)·h
     #verletStep(particle, h) {
         const C3 = Cesium.Cartesian3;
-        const earth = this.earth;
+        const earth = this.earth.model;
         const p = particle.state.position;
         const v = particle.state.velocity;
         const temp = this.#scratch.temp;

@@ -1,20 +1,22 @@
 // ============================================================
-// Test unitari della geometria: sistemi ECI/ECEF e terna ENU.
+// Test unitari della geometria: terna ENU, velocità in un sistema
+// rotante, angoli.
 // ============================================================
 
 import { describe, it, expect } from "vitest";
 import * as Cesium from "cesium";
 import {
-    OMEGA,
     REFERENCE_SYSTEMS,
     bySystem,
     dragVelocity,
-    eciToEcef,
-    ecefToEci,
     enuRotation,
     normalizeDegrees,
     relativeVelocity
 } from "../src/geometry/referenceFrames.js";
+import { OMEGA } from "../src/model/rotationAxis.js";
+
+// Velocità angolare terrestre di prova (asse Z).
+const OMEGA_Z = new Cesium.Cartesian3(0, 0, OMEGA);
 
 describe("terna Est-Nord-Su da una verticale", function () {
     const C3 = Cesium.Cartesian3;
@@ -50,36 +52,10 @@ describe("terna Est-Nord-Su da una verticale", function () {
     });
 });
 
-describe("trasformazioni ECI <-> ECEF", function () {
-    it("ecefToEci annulla eciToEcef", function () {
-        const p = new Cesium.Cartesian3(1234567, -7654321, 3456789);
-        const back = ecefToEci(eciToEcef(p, 1.234), 1.234);
-        expect(Cesium.Cartesian3.distance(p, back)).toBeLessThan(1e-6);
-    });
-
-    it("ruota attorno a Z di -angolo (verso della rotazione terrestre)", function () {
-        // Dopo un quarto di giro un punto fisso in ECI sull'asse X
-        // si trova, rispetto alla Terra, sull'asse -Y (cioè a ovest).
-        const p = eciToEcef(new Cesium.Cartesian3(1, 0, 0), Math.PI / 2);
-        expect(p.x).toBeCloseTo(0, 12);
-        expect(p.y).toBeCloseTo(-1, 12);
-        expect(p.z).toBe(0);
-    });
-
-    it("non modifica la componente Z", function () {
-        expect(eciToEcef(new Cesium.Cartesian3(3, 4, 5), 0.7).z).toBe(5);
-    });
-
-    it("il risultato può coincidere con il vettore di ingresso", function () {
-        const p = new Cesium.Cartesian3(1, 2, 3);
-        const expected = eciToEcef(p, 0.3);
-        eciToEcef(p, 0.3, p);
-        expect(Cesium.Cartesian3.distance(p, expected)).toBeLessThan(1e-15);
-    });
-
+describe("velocità in un sistema rotante", function () {
     it("velocità di trascinamento: ω × r, verso Est di modulo ω·ρ", function () {
         const r = new Cesium.Cartesian3(7e6, 0, 2e6);
-        const drag = dragVelocity(r);
+        const drag = dragVelocity(OMEGA_Z, r);
         expect(drag.x).toBeCloseTo(0, 12);
         expect(drag.y).toBeCloseTo(OMEGA * 7e6, 12);
         expect(drag.z).toBe(0);
@@ -95,7 +71,7 @@ describe("trasformazioni ECI <-> ECEF", function () {
         const v = new Cesium.Cartesian3(100, 200, 300);
         const drag = new Cesium.Cartesian3(-OMEGA * r.y, OMEGA * r.x, 0);
         const expected = Cesium.Cartesian3.subtract(v, drag, new Cesium.Cartesian3());
-        expect(Cesium.Cartesian3.distance(relativeVelocity(r, v), expected)).toBeLessThan(1e-12);
+        expect(Cesium.Cartesian3.distance(relativeVelocity(OMEGA_Z, r, v), expected)).toBeLessThan(1e-12);
     });
 });
 

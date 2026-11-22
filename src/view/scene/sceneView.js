@@ -56,8 +56,6 @@ export class SceneView {
     #startMarker;
     #markerPoint;
     #scratchPixelSphere = new Cesium.BoundingSphere();
-    #scratchRotation3 = new Cesium.Matrix3();
-    #scratchRotation4 = new Cesium.Matrix4();
 
     constructor(viewer, viewModel) {
         this.#viewer = viewer;
@@ -84,7 +82,7 @@ export class SceneView {
     // Oggetti della scena per i test end-to-end.
     get testObjects() {
         return {
-            arrows: { absolute: this.#arrows.eci, relative: this.#arrows.ecef },
+            arrows: this.#arrows,
             frames: this.#framePolylines
         };
     }
@@ -176,7 +174,7 @@ export class SceneView {
     #addVelocityArrow(system) {
         const velocityAt = (time) => this.#frameAt(time).velocities[system];
         const positions = (time) => {
-            const { origin: center, vector: velocity } = velocityAt(time);
+            const { position: center, vector: velocity } = velocityAt(time);
             const speed = Cesium.Cartesian3.magnitude(velocity);
             if (speed < VELOCITY_ARROW_MIN_SPEED) {
                 return [Cesium.Cartesian3.clone(center), Cesium.Cartesian3.clone(center)];
@@ -210,17 +208,15 @@ export class SceneView {
     // TRAIETTORIE
     // --------------------------------------------------
     //
-    // - ECEF (verde): vertici in ECEF, ruotano con la Terra.
-    // - ECI (rossa): vertici in ECI, disegnati con la rotazione
-    //   ECI -> ECEF del frame: la traccia resta ferma nello spazio.
+    // Vertici nelle coordinate della traiettoria, disegnati con la
+    // matrice verso ECEF dell'istante fornita dal ViewModel:
+    // - relativa (verde): figlia della Terra, ruota con la Terra;
+    // - assoluta (rossa): figlia di World, resta ferma nello spazio.
 
-    // Aggiorna la rotazione della traccia ECI e aggiunge i punti nuovi.
+    // Aggiorna la posa delle tracce e aggiunge i punti nuovi.
     #updateTracks(frame) {
-        Cesium.Matrix3.fromRotationZ(-frame.earthAngle, this.#scratchRotation3);
-        Cesium.Matrix4.fromRotation(this.#scratchRotation3, this.#scratchRotation4);
-        this.#tracks.eci.setModelMatrix(this.#scratchRotation4);
-
         REFERENCE_SYSTEMS.forEach((system) => {
+            this.#tracks[system].setModelMatrix(frame.trajectoryTransforms[system]);
             this.#tracks[system].sync(this.#vm.trajectory(system));
         });
     }
@@ -287,7 +283,7 @@ export class SceneView {
     // FRAME_AXIS_PIXELS a schermo.
     #updateReferenceFrames(frame) {
         REFERENCE_SYSTEMS.forEach((system) => {
-            const { origin, axes } = frame.referenceFrames[system];
+            const { position: origin, axes } = frame.referenceFrames[system];
             const length = FRAME_AXIS_PIXELS * this.#metersPerPixelAt(origin);
             this.#framePolylines[system].forEach((polyline, i) => {
                 const tip = Cesium.Cartesian3.multiplyByScalar(axes[i], length, new Cesium.Cartesian3());

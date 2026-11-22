@@ -7,13 +7,13 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import * as Cesium from "cesium";
-import { eciToEcef } from "../src/geometry/referenceFrames.js";
 import { Simulation } from "../src/model/simulation.js";
 import { GeolocationService, SimulationClock } from "../src/services/interfaces.js";
 import {
     PICK_REQUIRES_RESET_MESSAGE,
     SimulationViewModel
 } from "../src/viewmodel/simulationViewModel.js";
+import { eciToEcef } from "./helpers.js";
 
 // --------------------------------------------------
 // Implementazioni finte delle interfacce
@@ -144,9 +144,9 @@ describe("condizioni iniziali", function () {
     });
 
     it("la terna modificata determina l'altra", function () {
-        vm.setVelocity("relative", "speedKmh", 1000);
-        expect(vm.velocity("relative").speedKmh).toBe(1000);
-        expect(vm.velocity("absolute").speedKmh).not.toBeCloseTo(1000, 0);
+        vm.setVelocity("ecef", "speedKmh", 1000);
+        expect(vm.velocity("ecef").speedKmh).toBe(1000);
+        expect(vm.velocity("eci").speedKmh).not.toBeCloseTo(1000, 0);
         expect(vm.frame.status.speedEcefKmh).toBeCloseTo(1000, 6);
     });
 });
@@ -254,14 +254,17 @@ describe("stato a un istante", function () {
         expect(frame.status.longitudeDeg).toBeCloseTo(7.1, 9);
         expect(frame.status.timeSeconds).toBe(0);
         const { eci, ecef } = frame.referenceFrames;
-        expect(Cesium.Cartesian3.distance(eci.origin, ecef.origin)).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(eci.position, ecef.position)).toBeLessThan(1e-6);
     });
 
     it("la terna ECI ruota rispetto a quella ECEF", function () {
         const frame = vm.frameAt(3600);
         const { eci, ecef } = frame.referenceFrames;
-        expect(Cesium.Cartesian3.distance(eci.origin, ecef.origin)).toBeGreaterThan(1000);
-        expect(frame.earthAngle).toBeCloseTo(7.292115e-5 * 3600, 15);
+        expect(Cesium.Cartesian3.distance(eci.position, ecef.position)).toBeGreaterThan(1000);
+        // Vista dalla Terra, la terna ECI è ruotata all'indietro
+        // dell'angolo di cui la Terra ha ruotato.
+        const rotated = eciToEcef(ecef.position, 7.292115e-5 * 3600);
+        expect(Cesium.Cartesian3.distance(eci.position, rotated)).toBeLessThan(1e-6);
     });
 
     it("le traiettorie crescono con il tempo e ripartono al Reset", function () {

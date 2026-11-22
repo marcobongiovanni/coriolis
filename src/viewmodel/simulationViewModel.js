@@ -5,14 +5,18 @@
 // dell'interfaccia: riceve il tempo e la posizione geografica tramite
 // le interfacce SimulationClock e GeolocationService.
 //
-// Ogni elemento della scena corrisponde a un elemento del modello:
-//   particella, punto di partenza                       -> Particle
+// Ogni elemento della scena corrisponde a un nodo della gerarchia del
+// modello (SceneNode, vedi Simulation):
+//   Terra                                               -> Earth
+//   particella                                          -> Particle
+//   punto di partenza                                   -> StartPoint
 //   frecce della velocità                               -> Arrow
 //   traiettorie                                         -> Trajectory
 //   terne nel punto di partenza                         -> EnuFrame
-//   asse di rotazione                                   -> rotationAxis
-//                                                          del modello di Terra
+//   asse di rotazione                                   -> RotationAxis
 //   telecamere ECI ed ECEF                              -> Camera
+// Cesium disegna nel sistema ECEF: il ViewModel esprime ogni elemento
+// nelle coordinate della Terra.
 //
 // Eventi emessi (vedi Observable):
 //   "change"            lo stato mostrato dalle viste è cambiato
@@ -25,8 +29,6 @@ import * as Cesium from "cesium";
 import {
     KMH_PER_MS,
     bySystem,
-    earthRotationAngle,
-    eciToEcef,
     normalizeDegrees
 } from "../geometry/referenceFrames.js";
 import { WGS84 } from "../model/earth.js";
@@ -84,7 +86,7 @@ export class SimulationViewModel extends Observable {
 
     // Modello di Terra: sfera (true) o ellissoide (false).
     get sphericalEarth() {
-        return this.#simulation.useSphericalEarth;
+        return this.#simulation.earth.spherical;
     }
 
     // Raggio della particella [m].
@@ -94,12 +96,12 @@ export class SimulationViewModel extends Observable {
 
     // Latitudine del punto di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
-        return this.#particle.start.latitudeDeg;
+        return this.#particle.startPoint.latitudeDeg;
     }
 
     // Longitudine del punto di partenza [°], in [0°, 360°).
     get longitudeDeg() {
-        return this.#particle.start.longitudeDeg;
+        return this.#particle.startPoint.longitudeDeg;
     }
 
     // Quota di partenza [km].
@@ -109,28 +111,32 @@ export class SimulationViewModel extends Observable {
 
     // Punto di partenza sulla superficie (ECEF).
     get startSurfacePoint() {
-        return this.#particle.start.surfacePointECEF;
+        return this.#particle.startPoint.positionIn(this.#simulation.earth, 0);
     }
 
     // Posa { position, direction, up } della telecamera attiva in ECEF
     // all'istante "seconds" [s simulati].
     cameraPose(seconds) {
-        return this.#simulation.cameras[this.cameraMode].inEcef(seconds);
+        return this.#simulation.cameras[this.cameraMode].expressedIn(this.#simulation.earth, seconds);
     }
 
-    // Terna di velocità iniziale: "relative" (ECEF) o "absolute" (ECI).
+    // Terna di velocità iniziale: "ecef" (relativa) o "eci" (assoluta).
     velocity(frame) {
         return this.#particle.velocity[frame];
     }
 
-    // Direzione dell'asse di rotazione terrestre (verso il Polo Nord).
+    // Direzione dell'asse di rotazione terrestre (verso il Polo Nord), in
+    // ECEF. La Terra ruota attorno all'asse, quindi è la stessa in ogni
+    // istante.
     get rotationAxis() {
-        return this.#simulation.earth.rotationAxis.direction;
+        const { earth, rotationAxis } = this.#simulation;
+        return rotationAxis.axesIn(earth, 0)[2]; // L'asse è l'asse Z del nodo
     }
 
-    // Traiettoria della particella nel sistema "eci" o "ecef":
-    // { points, revision } (vedi Trajectory). I punti sono in sola
-    // lettura.
+    // Traiettoria assoluta ("eci") o relativa ("ecef") della particella:
+    // { points, revision } (vedi Trajectory). I punti sono nelle
+    // coordinate della traiettoria (vedi frameAt().trajectoryTransforms),
+    // in sola lettura.
     trajectory(system) {
         const { points, revision } = this.#particle.trajectories[system];
         return { points, revision };
@@ -213,7 +219,7 @@ export class SimulationViewModel extends Observable {
     // Modello di Terra: sfera (true) o ellissoide (false).
     setSphericalEarth(spherical) {
         this.#editSetup(() => {
-            this.#simulation.useSphericalEarth = spherical;
+            this.#simulation.earth.spherical = spherical;
         });
     }
 
@@ -228,7 +234,7 @@ export class SimulationViewModel extends Observable {
     // posa in ECEF all'istante "seconds" [s simulati].
     moveCamera(system, pose, seconds) {
         const camera = this.#simulation.cameras[system];
-        camera.setFromEcef(pose, seconds);
+        camera.setFrom(this.#simulation.earth, pose, seconds);
         camera.movedByUser = true;
     }
 
@@ -236,12 +242,10 @@ export class SimulationViewModel extends Observable {
     // ha ancora spostato. "tanHalfFovWidth": tangente del semiangolo
     // del campo visivo lungo la larghezza della vista.
     frameStartPoint(tanHalfFovWidth) {
-        const particle = this.#particle;
+        const startFrame = this.#particle.startFrames.ecef; // Terna locale nel punto di partenza
         Object.values(this.#simulation.cameras)
             .filter((camera) => !camera.movedByUser)
-            .forEach((camera) => camera.frameStartPoint(
-                particle.initial.normal, particle.initial.sphereCenter, tanHalfFovWidth
-            ));
+            .forEach((camera) => camera.frameStartPoint(startFrame, tanHalfFovWidth));
     }
 
     // item: "frame", "track" o "velocity"; frame: "eci" o "ecef".
@@ -284,25 +288,25 @@ export class SimulationViewModel extends Observable {
         }
         this.#simulation.advanceTo(seconds);
 
-        const angle = earthRotationAngle(seconds);
+        const earth = this.#simulation.earth;
         const particle = this.#particle;
         const state = particle.state;
-        const particlePositionEcef = eciToEcef(state.position, angle);
-        // { eci, ecef } -> stessi elementi in coordinate ECEF all'istante.
-        const inEcef = (elements) => bySystem((system) => elements[system].inEcef(seconds));
-        const velocities = inEcef(particle.velocityArrows);
+        const particlePositionEcef = particle.pointTo(earth, seconds, state.position);
+        const velocities = bySystem((system) => particle.velocityArrows[system].expressedIn(earth, seconds));
         const speedKmh = (system) => Cesium.Cartesian3.magnitude(velocities[system].vector) * KMH_PER_MS;
 
         this.#frame = {
             seconds: seconds,
-            earthAngle: angle,
             // Baricentro della particella e centro della sfera disegnata.
             particlePositionEcef: particlePositionEcef,
-            sphereCenterEcef: eciToEcef(state.sphereCenter, angle),
-            // Velocità assoluta (eci) e relativa (ecef): { origin, vector }.
+            sphereCenterEcef: particle.pointTo(earth, seconds, state.sphereCenter),
+            // Velocità assoluta (eci) e relativa (ecef): { position, vector }.
             velocities: velocities,
-            // Terne nel punto di partenza: { origin, axes: [E, N, U] }.
-            referenceFrames: inEcef(particle.startFrames),
+            // Terne nel punto di partenza: { position, axes: [E, N, U] }.
+            referenceFrames: bySystem((system) => particle.startFrames[system].poseIn(earth, seconds)),
+            // Matrici dalle coordinate delle traiettorie (vedi
+            // trajectory()) a ECEF.
+            trajectoryTransforms: bySystem((system) => particle.trajectories[system].transformTo(earth, seconds)),
             status: {
                 ...geographicPosition(particlePositionEcef),
                 timeSeconds: seconds,
