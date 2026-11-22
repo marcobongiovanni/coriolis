@@ -24,13 +24,15 @@ geometrica disegnata nella scena.
 - **Terna locale** (East-North-Up): terna cartesiana destrorsa con
   origine in un punto arbitrario. Gli assi X, Y e Z sono diretti 
   rispettivamente verso Est, verso Nord e lungo la **Normale locale** 
-  nel punto. Sulla Terra ellissoidale l'asse Z è quindi la normale 
-  geodetica, sulla Terra sferica è parallelo al raggio.
+  nel punto. L'asse X è orizzontale e perpendicolare all'**Asse di
+  rotazione**; ai poli, dove non è definito, si usa per convenzione
+  l'asse Y di **ECEF**.
   Nel codice: `EnuFrame`, `enuRotation`.
 
-- **Normale locale**: direzione perpendicolare alla **Superficie** in un
-  punto, verso l'esterno. È radiale per la Terra sferica e geodetica per
-  quella ellissoidale.
+- **Normale locale**: vettore di modulo unitario perpendicolare alla
+  **Superficie** in un punto e diretto verso l'esterno. È radiale per la
+  Terra sferica e geodetica per quella ellissoidale. È l'asse Z della
+  **Terna locale**.
   Nel codice: `heightAboveSurface` (parametro `normal`).
 
 - **Azimuth**: angolo misurato in senso orario tra l'asse Y (Nord) della
@@ -66,10 +68,10 @@ geometrica disegnata nella scena.
 
 ## Particella
 
-- **Particella**: punto materiale soggetto alla gravità del **Modello di
-  Terra**, in grado di rimbalzare elasticamente sulla **Superficie**. 
+- **Particella**: punto materiale soggetto alla gravità del **Modello di Terra**, 
+  in grado di rimbalzare elasticamente sulla **Superficie**. 
   Posizione, velocità, **Quota** e urti si riferiscono a questo punto.
-  Quando la **Quota** è 0, il punto coincide con il punto di contatto 
+  Quando la **Quota** = 0, il punto coincide con il punto di contatto 
   tra la **Sfera** e la **Superficie**. Nella scena è rappresentata dalla
   **Sfera**.
   Nel codice: `Particle`, `particle.state.position`.
