@@ -140,13 +140,15 @@ async function expectEarthFramedOnStartPoint(page) {
         const camera = viewer.camera;
         const C3 = Cesium.Cartesian3;
 
-        const enu = Cesium.Transforms.eastNorthUpToFixedFrame(particle.start.surfacePointECEF);
-        const toEnu = Cesium.Matrix4.inverseTransformation(enu, new Cesium.Matrix4());
-        const normal = C3.fromCartesian4(Cesium.Matrix4.getColumn(enu, 2, new Cesium.Cartesian4()));
+        // Terna Est-Nord-Su con Su lungo la normale locale del modello
+        // di Terra nel punto di partenza.
+        const normal = particle.initial.normal;
+        const east = C3.normalize(C3.cross(C3.UNIT_Z, normal, new C3()), new C3());
+        const north = C3.cross(normal, east, new C3());
 
         // Direzione centro della sfera -> telecamera, nella terna Est-Nord-Su.
         const offset = C3.subtract(camera.positionWC, particle.state.sphereCenter, new C3());
-        const local = Cesium.Matrix4.multiplyByPointAsVector(toEnu, offset, new C3());
+        const local = new C3(C3.dot(offset, east), C3.dot(offset, north), C3.dot(offset, normal));
         C3.normalize(local, local);
 
         const toParticle = C3.normalize(C3.negate(offset, new C3()), new C3());

@@ -52,9 +52,10 @@ export class Camera {
     }
 
     // Inquadratura iniziale (vedi cameraFraming.js): "target" (centro
-    // della sfera della particella) visto dal punto di partenza
-    // "surfacePoint". Valida a t = 0, quando ECI ed ECEF coincidono.
-    frameStartPoint(surfacePoint, target, tanHalfFovWidth) {
-        this.setFromEcef(startPointFraming(surfacePoint, target, tanHalfFovWidth), 0);
+    // della sfera della particella) visto nella terna locale con
+    // verticale "normal" (normale locale nel punto di partenza). Valida
+    // a t = 0, quando ECI ed ECEF coincidono.
+    frameStartPoint(normal, target, tanHalfFovWidth) {
+        this.setFromEcef(startPointFraming(normal, target, tanHalfFovWidth), 0);
     }
 }

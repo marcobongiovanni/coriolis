@@ -1,5 +1,7 @@
 // ============================================================
 // enuFrame.js — Terna Est-Nord-Su con origine in un punto.
+// L'asse Su è la normale locale del modello di Terra: radiale per la
+// Terra sferica, geodetica per quella ellissoidale.
 //
 // A t = 0 i sistemi ECI ed ECEF coincidono, quindi origine e assi sono
 // gli stessi in entrambi. Poi la terna:
@@ -38,10 +40,11 @@ export class EnuFrame {
     }
 
     // Porta l'origine in "origin" (a t = 0) e orienta gli assi verso
-    // Est, Nord e Su in quel punto.
-    placeAt(origin) {
+    // Est, Nord e Su, con Su lungo il versore "up" (la normale locale
+    // del modello di Terra nel punto).
+    placeAt(origin, up) {
         Cesium.Cartesian3.clone(origin, this.origin);
-        enuRotation(origin, this.#rotation);
+        enuRotation(up, this.#rotation);
         this.axes.forEach((axis, i) => Cesium.Matrix3.getColumn(this.#rotation, i, axis));
     }
 

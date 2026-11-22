@@ -174,7 +174,7 @@ describe("frecce della velocità", function () {
 describe("terne nel punto di partenza", function () {
     it("hanno origine nel centro iniziale della sfera e assi Est, Nord, Su", function () {
         const particle = createParticle({ latitude: 30, longitude: 100 });
-        const enu = enuRotation(particle.initial.sphereCenter);
+        const enu = enuRotation(particle.initial.normal);
         Object.values(particle.startFrames).forEach((frame) => {
             const { origin, axes } = frame.inEcef(0);
             expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
@@ -183,6 +183,19 @@ describe("terne nel punto di partenza", function () {
                 expect(Cesium.Cartesian3.distance(axis, expected)).toBeLessThan(1e-12);
             });
         });
+    });
+
+    it("l'asse Su è la normale locale: radiale (sfera) o geodetica (ellissoide)", function () {
+        const up = (particle) => particle.startFrames.ecef.axes[2];
+
+        const spherical = createParticle({ latitude: 45, longitude: 7.1 });
+        const radial = Cesium.Cartesian3.normalize(spherical.initial.position, new Cesium.Cartesian3());
+        expect(Cesium.Cartesian3.distance(up(spherical), radial)).toBeLessThan(1e-12);
+
+        const ellipsoidal = createParticle({ spherical: false, latitude: 45, longitude: 7.1 });
+        const wgs84 = Cesium.Ellipsoid.WGS84;
+        const geodetic = wgs84.geodeticSurfaceNormal(wgs84.scaleToGeodeticSurface(ellipsoidal.initial.position));
+        expect(Cesium.Cartesian3.distance(up(ellipsoidal), geodetic)).toBeLessThan(1e-12);
     });
 
     it("vista dalla Terra, la terna ECEF resta ferma e quella ECI ruota", function () {

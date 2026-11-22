@@ -11,9 +11,44 @@ import {
     dragVelocity,
     eciToEcef,
     ecefToEci,
+    enuRotation,
     normalizeDegrees,
     relativeVelocity
 } from "../src/geometry/referenceFrames.js";
+
+describe("terna Est-Nord-Su da una verticale", function () {
+    const C3 = Cesium.Cartesian3;
+    const column = (matrix, i) => Cesium.Matrix3.getColumn(matrix, i, new C3());
+
+    it("con la normale geodetica coincide con la terna ENU di Cesium", function () {
+        const point = C3.fromDegrees(100, 30, 1000);
+        const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(point);
+        const ours = enuRotation(normal);
+        const cesium = Cesium.Matrix4.getMatrix3(
+            Cesium.Transforms.eastNorthUpToFixedFrame(point), new Cesium.Matrix3()
+        );
+        [0, 1, 2].forEach((i) => {
+            expect(C3.distance(column(ours, i), column(cesium, i))).toBeLessThan(1e-12);
+        });
+    });
+
+    it("è ortonormale destrorsa con Su uguale alla verticale data", function () {
+        const up = C3.normalize(new C3(1, -2, 3), new C3());
+        const enu = enuRotation(up);
+        const [east, north, z] = [0, 1, 2].map((i) => column(enu, i));
+        expect(C3.distance(z, up)).toBeLessThan(1e-15);
+        expect(C3.dot(east, north)).toBeCloseTo(0, 15);
+        expect(east.z).toBeCloseTo(0, 15); // Est orizzontale
+        expect(north.z).toBeGreaterThan(0); // Nord verso il polo Nord
+        expect(C3.distance(C3.cross(east, north, new C3()), up)).toBeLessThan(1e-15);
+    });
+
+    it("ai poli usa Est = +Y, come Cesium", function () {
+        const enu = enuRotation(C3.UNIT_Z);
+        expect(C3.distance(column(enu, 0), C3.UNIT_Y)).toBeLessThan(1e-15);
+        expect(C3.distance(column(enu, 1), new C3(-1, 0, 0))).toBeLessThan(1e-15);
+    });
+});
 
 describe("trasformazioni ECI <-> ECEF", function () {
     it("ecefToEci annulla eciToEcef", function () {

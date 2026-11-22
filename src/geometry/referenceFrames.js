@@ -93,13 +93,29 @@ export function normalizeDegrees(deg) {
 // TERNA LOCALE EST-NORD-SU
 // --------------------------------------------------
 
-const scratchEnuTransform = new Cesium.Matrix4();
+const scratchEast = new Cesium.Cartesian3();
+const scratchNorth = new Cesium.Cartesian3();
 
-// Rotazione dalla terna Est-Nord-Su del punto (normale geodetica
-// WGS84) alle coordinate cartesiane: le colonne sono Est, Nord, Su.
-export function enuRotation(point, result) {
-    Cesium.Transforms.eastNorthUpToFixedFrame(point, Cesium.Ellipsoid.WGS84, scratchEnuTransform);
-    return Cesium.Matrix4.getMatrix3(scratchEnuTransform, result || new Cesium.Matrix3());
+// Rotazione dalla terna Est-Nord-Su alle coordinate cartesiane, data la
+// verticale "up" (versore, di norma la normale locale del modello di
+// Terra): le colonne sono Est, Nord, Su.
+//   Est  = Z × Su (orizzontale, verso cui ruota la Terra);
+//   Nord = Su × Est.
+// Ai poli (Su parallelo a Z) Est non è definito: si usa la stessa
+// convenzione di Cesium, Est = +Y.
+export function enuRotation(up, result) {
+    const C3 = Cesium.Cartesian3;
+    const east = C3.cross(EARTH_ROTATION_AXIS, up, scratchEast);
+    if (C3.magnitudeSquared(east) === 0) {
+        C3.clone(C3.UNIT_Y, east);
+    }
+    C3.normalize(east, east);
+    const north = C3.cross(up, east, scratchNorth);
+
+    result = result || new Cesium.Matrix3();
+    Cesium.Matrix3.setColumn(result, 0, east, result);
+    Cesium.Matrix3.setColumn(result, 1, north, result);
+    return Cesium.Matrix3.setColumn(result, 2, up, result);
 }
 
 // Versore ENU di azimuth [°] (in senso orario dal Nord) ed elevazione

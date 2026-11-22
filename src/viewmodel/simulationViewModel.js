@@ -240,7 +240,7 @@ export class SimulationViewModel extends Observable {
         Object.values(this.#simulation.cameras)
             .filter((camera) => !camera.movedByUser)
             .forEach((camera) => camera.frameStartPoint(
-                particle.start.surfacePointECEF, particle.initial.sphereCenter, tanHalfFovWidth
+                particle.initial.normal, particle.initial.sphereCenter, tanHalfFovWidth
             ));
     }
 

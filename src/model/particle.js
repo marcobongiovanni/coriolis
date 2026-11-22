@@ -93,7 +93,8 @@ export class Particle {
         position: new Cesium.Cartesian3(),
         velocityECI: new Cesium.Cartesian3(),
         velocityECEF: new Cesium.Cartesian3(),
-        sphereCenter: new Cesium.Cartesian3()
+        sphereCenter: new Cesium.Cartesian3(),
+        normal: new Cesium.Cartesian3() // Normale locale nel punto di partenza
     };
 
     // Stato corrente, in ECI.
@@ -168,7 +169,10 @@ export class Particle {
         this.updateDerivedState(earth);
         C3.clone(this.state.sphereCenter, initial.sphereCenter);
 
-        Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter));
+        // Terne con origine nel centro della sfera e asse Su lungo la
+        // normale locale del modello di Terra.
+        earth.heightAboveSurface(initial.position, initial.normal);
+        Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter, initial.normal));
         this.#computeInitialVelocity();
         C3.clone(initial.velocityECI, this.state.velocity);
 

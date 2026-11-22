@@ -55,7 +55,8 @@ describe("inquadratura iniziale", function () {
         const camera = new Camera("eci");
         const surface = C3.fromDegrees(7.1, 45, 0);
         const target = C3.fromDegrees(7.1, 45, 125000);
-        camera.frameStartPoint(surface, target, Math.tan(Cesium.Math.toRadians(30)));
+        const normal = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(surface);
+        camera.frameStartPoint(normal, target, Math.tan(Cesium.Math.toRadians(30)));
         const pose = camera.inEcef(0);
         const toTarget = C3.normalize(C3.subtract(target, pose.position, new C3()), new C3());
         expect(C3.dot(toTarget, pose.direction)).toBeCloseTo(1, 12);

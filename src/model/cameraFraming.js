@@ -84,11 +84,12 @@ function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
 }
 
 // Posa { position, direction, up } che inquadra "target" (centro della sfera della
-// particella) dal punto di partenza "surfacePoint". Valida a t = 0, quando
+// particella) nella terna locale con verticale "normal" (normale locale
+// del modello di Terra nel punto di partenza). Valida a t = 0, quando
 // ECI ed ECEF coincidono.
-export function startPointFraming(surfacePoint, target, tanHalfFovWidth) {
+export function startPointFraming(normal, target, tanHalfFovWidth) {
     const C3 = Cesium.Cartesian3;
-    const enu = enuRotation(surfacePoint);
+    const enu = enuRotation(normal);
 
     // Versore dalla particella verso la telecamera.
     const offset = Cesium.Matrix3.multiplyByVector(
@@ -98,7 +99,6 @@ export function startPointFraming(surfacePoint, target, tanHalfFovWidth) {
     const direction = C3.negate(offset, new C3());
 
     // Up: componente della normale ortogonale alla direzione di vista.
-    const normal = Cesium.Matrix3.getColumn(enu, 2, new C3());
     const up = C3.subtract(
         normal,
         C3.multiplyByScalar(direction, C3.dot(normal, direction), new C3()),
