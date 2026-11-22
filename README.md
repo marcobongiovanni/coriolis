@@ -10,6 +10,12 @@ la particella da sud-sud-est (azimuth 150°) con un'elevazione di 45° sopra
 l'orizzonte locale, senza rollio (la verticale del punto appare
 verticale), da una distanza a cui la Terra occupa il 95% della larghezza
 della vista.
+
+Le telecamere sono due, indipendenti: una ferma nello spazio inerziale
+(*Telecamera ECI*: la Terra ruota sullo schermo) e una solidale con la
+Terra (*Telecamera ECEF*). Entrambe partono dall'inquadratura iniziale;
+ognuna conserva la posa in cui l'utente l'ha lasciata, e il pannello
+sceglie quale mostrare.
 Se la posizione non è disponibile (permesso negato, pagina non in https,
 oppure un iframe che non la concede, come può succedere in Sandcastle)
 si parte da 45° N, 7.1° E.
@@ -35,12 +41,13 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 | `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta e quella relativa). |
 | `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma in ECI o in ECEF; conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
 | `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della sfera della particella, in ECI o in ECEF. |
-| `src/model/simulation.js` | Model | `Simulation`: modello di Terra, tempo, integrazione e urti delle particelle. |
+| `src/model/camera.js`, `cameraFraming.js` | Model | `Camera`: telecamera ferma in ECI o in ECEF, con la sua posa e l'inquadratura iniziale. |
+| `src/model/simulation.js` | Model | `Simulation`: modello di Terra, tempo, integrazione e urti delle particelle, telecamere. |
 | `src/services/interfaces.js` | servizi | Interfacce `SimulationClock` e `GeolocationService`. |
 | `src/services/cesiumClock.js`, `browserGeolocation.js` | servizi | Implementazioni con l'orologio di Cesium e la Geolocation API. |
 | `src/viewmodel/simulationViewModel.js` | ViewModel | Stato mostrato, comandi, regole dell'interfaccia (es. controlli bloccati durante la simulazione), stato di ogni istante in coordinate ECEF. |
 | `src/view/panel/` | View | Pannello dei controlli (DOM) e suo stile. |
-| `src/view/scene/` | View | Scena Cesium: entità, tracce, telecamera ECI/ECEF, pan, inquadratura. |
+| `src/view/scene/` | View | Scena Cesium: entità, tracce, presentazione della telecamera attiva, comandi del mouse e pan. |
 | `src/view/palette.js` | View | Colori comuni a scena e legenda. |
 | `src/main.js` | avvio | Crea e collega modello, servizi, ViewModel e viste. |
 | `test/` | | Test unitari di modello e ViewModel (Vitest, in Node). |
@@ -63,6 +70,7 @@ Ogni tipo di elemento della scena corrisponde a un elemento del modello:
 | Traiettorie ECI ed ECEF | `Trajectory` (`particle.trajectories`) |
 | Terne ECI ed ECEF nel punto di partenza | `EnuFrame` (`particle.startFrames`) |
 | Asse di rotazione | `rotationAxis` del modello di Terra |
+| Telecamere ECI ed ECEF | `Camera` (`simulation.cameras`) |
 
 La vista decide solo come disegnarli (colori, spessori, lunghezza a
 schermo); i dati vengono dal modello attraverso il ViewModel.
@@ -182,6 +190,8 @@ Dipendenze consentite (ogni livello conosce solo quelli alla sua destra):
   iniziali, stato iniziale, coerenza tra velocità relativa e assoluta
   (`v_ECI = v_ECEF + ω × r`), frecce della velocità, terne nel punto di
   partenza, traiettorie;
+- `test/camera.test.js`: posa delle telecamere ferma in ECI o in ECEF,
+  inquadratura iniziale;
 - `test/simulation.test.js`: gravità con e senza J2 e J4, superficie, asse
   di rotazione, registrazione della traiettoria, conservazione
   dell'energia, rimbalzi, deriva su Terra sferica ed ellissoidale.
@@ -192,14 +202,14 @@ particelle e simulazioni.
 **Unitari del ViewModel** (`test/viewModel.test.js`, senza browser, con
 orologio e geolocalizzazione finti): play/pausa e blocco dei controlli,
 Reset, selezione del punto, posizione del PC, stato di ogni istante,
-traiettorie.
+traiettorie, telecamere indipendenti.
 
 **End-to-end** (`e2e/app.spec.js`, browser: Edge su Windows, Chromium
 altrove; si può forzare con la variabile `PW_CHANNEL`, es. `chrome`): avvio senza errori, play/pausa e
 controlli disattivati, stop dopo una simulazione (regressione del bug
 "This object was destroyed"), pulsante *Punto iniziale*, longitudine
 ciclica, latitudine limitata, coerenza delle velocità nei campi,
-caselle di *Visualizzazione*.
+caselle di *Visualizzazione*, telecamere ECI ed ECEF indipendenti, pan.
 
 I test end-to-end bloccano le richieste di rete (mappe di Cesium ion):
 non dipendono dalla connessione. La pagina locale usa la build **non

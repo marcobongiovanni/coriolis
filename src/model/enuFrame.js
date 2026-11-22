@@ -18,10 +18,10 @@ import * as Cesium from "cesium";
 import {
     KMH_PER_MS,
     directionEnu,
-    earthRotationAngle,
     eciToEcef,
     enuRotation,
-    normalizeDegrees
+    normalizeDegrees,
+    systemToEcefAngle
 } from "../geometry/referenceFrames.js";
 
 export class EnuFrame {
@@ -47,7 +47,7 @@ export class EnuFrame {
 
     // Origine e assi in coordinate ECEF all'istante "seconds" (copie).
     inEcef(seconds) {
-        const angle = this.system === "eci" ? earthRotationAngle(seconds) : 0;
+        const angle = systemToEcefAngle(this.system, seconds);
         return {
             origin: eciToEcef(this.origin, angle),
             axes: this.axes.map((axis) => eciToEcef(axis, angle))

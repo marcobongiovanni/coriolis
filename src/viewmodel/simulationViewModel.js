@@ -12,6 +12,7 @@
 //   terne nel punto di partenza                         -> EnuFrame
 //   asse di rotazione                                   -> rotationAxis
 //                                                          del modello di Terra
+//   telecamere ECI ed ECEF                              -> Camera
 //
 // Eventi emessi (vedi Observable):
 //   "change"            lo stato mostrato dalle viste è cambiato
@@ -36,7 +37,8 @@ export const PICK_REQUIRES_RESET_MESSAGE =
     "Per selezionare un nuovo punto premi prima il pulsante Reset.";
 
 export class SimulationViewModel extends Observable {
-    // Sistema in cui la telecamera resta ferma: "eci" oppure "ecef".
+    // Telecamera attiva: quella ferma in "eci" oppure quella ferma in
+    // "ecef". Ognuna conserva la propria posa.
     cameraMode = "eci";
 
     // Vero mentre si attende il clic sul globo che sceglie il punto.
@@ -110,9 +112,10 @@ export class SimulationViewModel extends Observable {
         return this.#particle.start.surfacePointECEF;
     }
 
-    // Centro della sfera della particella a t = 0 (ECI = ECEF).
-    get startSphereCenter() {
-        return this.#particle.initial.sphereCenter;
+    // Posa { position, direction, up } della telecamera attiva in ECEF
+    // all'istante "seconds" [s simulati].
+    cameraPose(seconds) {
+        return this.#simulation.cameras[this.cameraMode].inEcef(seconds);
     }
 
     // Terna di velocità iniziale: "relative" (ECEF) o "absolute" (ECI).
@@ -214,11 +217,31 @@ export class SimulationViewModel extends Observable {
         });
     }
 
-    // Sistema in cui la telecamera resta ferma ("eci" o "ecef"). Attivo
-    // anche durante la simulazione.
+    // Telecamera attiva ("eci" o "ecef"). Attivo anche durante la
+    // simulazione.
     setCameraMode(mode) {
         this.cameraMode = mode;
         this.emit("change");
+    }
+
+    // L'utente ha spostato la telecamera "system": "pose" è la nuova
+    // posa in ECEF all'istante "seconds" [s simulati].
+    moveCamera(system, pose, seconds) {
+        const camera = this.#simulation.cameras[system];
+        camera.setFromEcef(pose, seconds);
+        camera.movedByUser = true;
+    }
+
+    // Inquadra il punto di partenza con le telecamere che l'utente non
+    // ha ancora spostato. "tanHalfFovWidth": tangente del semiangolo
+    // del campo visivo lungo la larghezza della vista.
+    frameStartPoint(tanHalfFovWidth) {
+        const particle = this.#particle;
+        Object.values(this.#simulation.cameras)
+            .filter((camera) => !camera.movedByUser)
+            .forEach((camera) => camera.frameStartPoint(
+                particle.start.surfacePointECEF, particle.initial.sphereCenter, tanHalfFovWidth
+            ));
     }
 
     // item: "frame", "track" o "velocity"; frame: "eci" o "ecef".

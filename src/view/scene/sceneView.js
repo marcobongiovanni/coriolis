@@ -2,8 +2,9 @@
 // sceneView.js — Scena 3D di Cesium.
 //
 // Solo presentazione: disegna ciò che il ViewModel fornisce (stato di
-// ogni istante già in coordinate ECEF) e inoltra al ViewModel il punto
-// scelto sul globo.
+// ogni istante e posa della telecamera attiva, già in coordinate ECEF)
+// e inoltra al ViewModel il punto scelto sul globo e gli spostamenti
+// della telecamera fatti dall'utente.
 //
 // Orologio di Cesium come unica sorgente del tempo: le entità sono
 // aggiornate da Cesium con il "time" del frame (CallbackProperty) e
@@ -72,11 +73,8 @@ export class SceneView {
         this.#installPicking();
 
         viewModel.on("change", () => this.#render());
-        viewModel.on("startPointLocated", () => {
-            if (!this.#camera.movedByUser) {
-                this.#frameStartPoint();
-            }
-        });
+        // Il ViewModel inquadra solo le telecamere non spostate dall'utente.
+        viewModel.on("startPointLocated", () => this.#frameStartPoint());
         viewer.scene.preRender.addEventListener((scene, time) => this.#update(time));
 
         this.#frameStartPoint();
@@ -95,15 +93,33 @@ export class SceneView {
     // AGGIORNAMENTO
     // --------------------------------------------------
 
-    // Stato del ViewModel all'istante "time" dell'orologio di Cesium.
-    #frameAt(time) {
-        const clock = this.#viewer.clock;
-        return this.#vm.frameAt(Cesium.JulianDate.secondsDifference(time, clock.startTime));
+    // Secondi simulati all'istante "time" dell'orologio di Cesium
+    // (dell'istante corrente se non indicato).
+    #secondsAt(time = this.#viewer.clock.currentTime) {
+        return Cesium.JulianDate.secondsDifference(time, this.#viewer.clock.startTime);
     }
 
-    // Inquadratura iniziale sul punto di partenza.
+    // Stato del ViewModel all'istante "time" dell'orologio di Cesium.
+    #frameAt(time) {
+        return this.#vm.frameAt(this.#secondsAt(time));
+    }
+
+    // Inquadratura iniziale sul punto di partenza, mostrata subito.
     #frameStartPoint() {
-        this.#camera.frameStartPoint(this.#vm.startSurfacePoint, this.#vm.startSphereCenter);
+        this.#vm.frameStartPoint(this.#camera.tanHalfFovWidth);
+        this.#showCamera(this.#secondsAt());
+    }
+
+    // Registra nel modello l'eventuale spostamento della telecamera fatto
+    // dall'utente, poi mostra la posa della telecamera attiva
+    // all'istante "seconds".
+    #showCamera(seconds) {
+        const vm = this.#vm;
+        const move = this.#camera.takeUserMove();
+        if (move) {
+            vm.moveCamera(move.system, move.pose, move.seconds);
+        }
+        this.#camera.apply(vm.cameraMode, seconds, vm.cameraPose(seconds));
     }
 
     // Stato del ViewModel che non dipende dal tempo.
@@ -123,13 +139,15 @@ export class SceneView {
         }
 
         this.#viewer.canvas.style.cursor = vm.pickMode ? "crosshair" : "";
-        this.#camera.setMode(vm.cameraMode);
+        // Subito, senza attendere il frame: la telecamera attiva può
+        // essere cambiata.
+        this.#showCamera(this.#secondsAt());
     }
 
     // A ogni frame, prima del rendering.
     #update(time) {
         const frame = this.#frameAt(time);
-        this.#camera.update(frame.earthAngle);
+        this.#showCamera(frame.seconds);
         this.#updateTracks(frame);
         // Dopo la telecamera: la dimensione a schermo usa la sua posa.
         this.#updateReferenceFrames(frame);

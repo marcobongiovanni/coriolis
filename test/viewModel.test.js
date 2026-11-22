@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach } from "vitest";
 import * as Cesium from "cesium";
+import { eciToEcef } from "../src/geometry/referenceFrames.js";
 import { Simulation } from "../src/model/simulation.js";
 import { GeolocationService, SimulationClock } from "../src/services/interfaces.js";
 import {
@@ -189,6 +190,51 @@ describe("visualizzazione", function () {
         expect(vm.cameraMode).toBe("ecef");
         expect(vm.visibility.track.eci).toBe(false);
         expect(events).toEqual(["change", "change"]);
+    });
+});
+
+describe("telecamere", function () {
+    const TAN_HALF_FOV = Math.tan(Cesium.Math.toRadians(30));
+
+    // Distanza tra le posizioni delle pose di due telecamere.
+    function poseDistance(a, b) {
+        return Cesium.Cartesian3.distance(a.position, b.position);
+    }
+
+    it("all'inizio entrambe inquadrano il punto di partenza", function () {
+        vm.frameStartPoint(TAN_HALF_FOV);
+        const eci = vm.cameraPose(0);
+        vm.setCameraMode("ecef");
+        expect(poseDistance(vm.cameraPose(0), eci)).toBeLessThan(1e-6);
+    });
+
+    it("ognuna conserva la propria posa: spostarne una non cambia l'altra", function () {
+        vm.frameStartPoint(TAN_HALF_FOV);
+        const initial = vm.cameraPose(0);
+        const moved = { ...initial, position: Cesium.Cartesian3.multiplyByScalar(initial.position, 1.5, new Cesium.Cartesian3()) };
+        vm.moveCamera("ecef", moved, 0);
+
+        expect(poseDistance(vm.cameraPose(0), initial)).toBeLessThan(1e-6); // attiva: ECI
+        vm.setCameraMode("ecef");
+        expect(poseDistance(vm.cameraPose(0), moved)).toBeLessThan(1e-6);
+    });
+
+    it("l'inquadratura automatica non tocca una telecamera spostata dall'utente", function () {
+        vm.frameStartPoint(TAN_HALF_FOV);
+        const initial = vm.cameraPose(0);
+        const moved = { ...initial, position: Cesium.Cartesian3.multiplyByScalar(initial.position, 2, new Cesium.Cartesian3()) };
+        vm.moveCamera("eci", moved, 0);
+        vm.frameStartPoint(TAN_HALF_FOV);
+        expect(poseDistance(vm.cameraPose(0), moved)).toBeLessThan(1e-6);
+    });
+
+    it("la telecamera ECI resta ferma nello spazio, quella ECEF rispetto alla Terra", function () {
+        vm.frameStartPoint(TAN_HALF_FOV);
+        const start = vm.cameraPose(0);
+        const rotated = eciToEcef(start.position, 7.292115e-5 * 3600);
+        expect(Cesium.Cartesian3.distance(vm.cameraPose(3600).position, rotated)).toBeLessThan(1e-6);
+        vm.setCameraMode("ecef");
+        expect(poseDistance(vm.cameraPose(3600), start)).toBeLessThan(1e-6);
     });
 });
 

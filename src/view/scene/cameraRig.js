@@ -1,20 +1,15 @@
 // ============================================================
-// cameraRig.js — Telecamera fissa in ECI o solidale con la Terra
-// (ECEF), comandi del mouse e pan.
+// cameraRig.js — Presentazione delle telecamere del modello sulla
+// telecamera di Cesium, comandi del mouse e pan.
 //
-// Modalità (mode):
-//   - "eci": ferma nello spazio inerziale; la posa ECI è riapplicata a
-//     ogni frame, quindi la Terra ruota sullo schermo. I movimenti fatti
-//     dall'utente vengono riconosciuti e acquisiti come nuova posa ECI;
-//   - "ecef": solidale con la Terra (la Terra appare immobile). La posa
-//     di Cesium è già in coordinate ECEF, quindi basta non toccarla.
-// Il cambio di modalità non sposta la telecamera: la vista resta
-// identica e da quel momento è mantenuta nel nuovo sistema.
+// La posa da mostrare arriva dal ViewModel (telecamera attiva, in
+// ECEF) ed è applicata a ogni frame con apply(). Tra un frame e il
+// successivo l'utente può muovere la telecamera di Cesium con il mouse:
+// takeUserMove() riconosce lo spostamento e lo restituisce, così che il
+// ViewModel lo registri nella telecamera del modello che era mostrata.
 // ============================================================
 
 import * as Cesium from "cesium";
-import { ecefToEci, eciToEcef } from "../../geometry/referenceFrames.js";
-import { startPointFraming } from "./cameraFraming.js";
 
 // Soglie oltre le quali la posa è considerata mossa dall'utente.
 const MOVED_POSITION_TOLERANCE = 0.01; // [m]
@@ -72,22 +67,11 @@ function setCameraPose(camera, position, direction, up) {
 }
 
 export class CameraRig {
-    // Diventa vero al primo movimento della telecamera fatto dall'utente.
-    movedByUser = false;
-
     #viewer;
     #camera;
-    #mode = "eci";
-    #earthAngle = 0;
-    // Posa da mantenere ferma in ECI.
-    #inertialPose = {
-        position: new Cesium.Cartesian3(),
-        direction: new Cesium.Cartesian3(),
-        up: new Cesium.Cartesian3()
-    };
-    // Ultima posa (ECEF) impostata da qui, per riconoscere i movimenti
-    // dell'utente.
-    #appliedPose;
+    // Ultima posa applicata: { system, seconds, pose } con la posa ECEF
+    // effettiva di Cesium, per riconoscere gli spostamenti dell'utente.
+    #applied;
     // Profondità del punto afferrato con il pan [m]; undefined = nessun pan.
     #panDepth;
 
@@ -99,99 +83,53 @@ export class CameraRig {
         this.#installPan();
     }
 
-    // Sistema in cui la telecamera resta ferma: "eci" o "ecef".
-    setMode(mode) {
-        if (mode === "eci" && this.#mode !== "eci") {
-            // La posa attuale diventa quella da mantenere ferma in ECI.
-            this.#captureInertialPose();
-        }
-        this.#mode = mode;
-    }
-
-    // Inquadratura iniziale: particella in "target" vista dal punto di
-    // partenza "surfacePoint". Da chiamare a t = 0 (ECI = ECEF).
-    frameStartPoint(surfacePoint, target) {
-        const pose = startPointFraming(surfacePoint, target, this.#tanHalfFovWidth());
-        Cesium.Cartesian3.clone(pose.position, this.#inertialPose.position);
-        Cesium.Cartesian3.clone(pose.direction, this.#inertialPose.direction);
-        Cesium.Cartesian3.clone(pose.up, this.#inertialPose.up);
-        if (this.#mode === "eci") {
-            this.#applyInertialPose();
-        }
-    }
-
-    // A ogni frame, con l'angolo terrestre del frame.
-    update(earthAngle) {
-        // Un movimento dell'utente è acquisito con l'angolo del frame
-        // precedente, quello con cui era stata impostata la posa.
-        if (this.#mode === "eci" && this.#poseChanged()) {
-            this.#captureInertialPose();
-            this.movedByUser = true;
-        }
-        this.#earthAngle = earthAngle;
-        if (this.#mode === "eci") {
-            this.#applyInertialPose();
-        }
-    }
-
-    // --------------------------------------------------
-    // POSA INERZIALE
-    // --------------------------------------------------
-
-    // Tangente del semiangolo del campo visivo lungo la larghezza (in
-    // Cesium "fov" vale per il lato più lungo della vista).
-    #tanHalfFovWidth() {
+    // Tangente del semiangolo del campo visivo lungo la larghezza della
+    // vista (in Cesium "fov" vale per il lato più lungo).
+    get tanHalfFovWidth() {
         const container = this.#viewer.container;
         const width = container.clientWidth || 1;
         const height = container.clientHeight || 1;
         return Math.tan(this.#camera.frustum.fov / 2) * width / Math.max(width, height);
     }
 
-    // Annota la posa attuale come impostata da qui.
-    #rememberAppliedPose() {
+    // Mostra la posa "pose" (ECEF) della telecamera "system" del modello
+    // all'istante "seconds".
+    apply(system, seconds, pose) {
+        setCameraPose(this.#camera, pose.position, pose.direction, pose.up);
+        this.#applied = { system: system, seconds: seconds, pose: this.#currentPose() };
+    }
+
+    // Se l'utente ha spostato la telecamera dopo l'ultimo apply(),
+    // restituisce { system, seconds, pose }: la telecamera del modello
+    // che era mostrata, l'istante in cui era stata applicata e la nuova
+    // posa ECEF. Altrimenti undefined.
+    takeUserMove() {
+        const applied = this.#applied;
+        if (!applied || !this.#poseChanged(applied.pose)) {
+            return undefined;
+        }
+        const pose = this.#currentPose();
+        this.#applied = { ...applied, pose: pose };
+        return { system: applied.system, seconds: applied.seconds, pose: pose };
+    }
+
+    // Posa attuale della telecamera di Cesium, in ECEF (copie).
+    #currentPose() {
         const camera = this.#camera;
-        this.#appliedPose = {
+        return {
             position: Cesium.Cartesian3.clone(camera.positionWC),
             direction: Cesium.Cartesian3.clone(camera.directionWC),
             up: Cesium.Cartesian3.clone(camera.upWC)
         };
     }
 
-    // Vero se la posa è cambiata dall'ultima impostata da qui, cioè se
-    // l'ha mossa l'utente.
-    #poseChanged() {
+    // Vero se la telecamera di Cesium non è più nella posa "pose".
+    #poseChanged(pose) {
         const camera = this.#camera;
-        const applied = this.#appliedPose;
         const distance = Cesium.Cartesian3.distance;
-        return !applied ||
-            distance(camera.positionWC, applied.position) > MOVED_POSITION_TOLERANCE ||
-            distance(camera.directionWC, applied.direction) > MOVED_AXIS_TOLERANCE ||
-            distance(camera.upWC, applied.up) > MOVED_AXIS_TOLERANCE;
-    }
-
-    // La posa attuale (ECEF) diventa la posa da mantenere ferma in ECI.
-    #captureInertialPose() {
-        const camera = this.#camera;
-        const pose = this.#inertialPose;
-        const angle = this.#earthAngle;
-        ecefToEci(camera.positionWC, angle, pose.position);
-        Cesium.Cartesian3.normalize(ecefToEci(camera.directionWC, angle, pose.direction), pose.direction);
-        Cesium.Cartesian3.normalize(ecefToEci(camera.upWC, angle, pose.up), pose.up);
-        this.#rememberAppliedPose();
-    }
-
-    // Porta la telecamera nella posa ECI, convertita in ECEF con
-    // l'angolo terrestre del frame.
-    #applyInertialPose() {
-        const pose = this.#inertialPose;
-        const angle = this.#earthAngle;
-        setCameraPose(
-            this.#camera,
-            eciToEcef(pose.position, angle),
-            eciToEcef(pose.direction, angle),
-            eciToEcef(pose.up, angle)
-        );
-        this.#rememberAppliedPose();
+        return distance(camera.positionWC, pose.position) > MOVED_POSITION_TOLERANCE ||
+            distance(camera.directionWC, pose.direction) > MOVED_AXIS_TOLERANCE ||
+            distance(camera.upWC, pose.up) > MOVED_AXIS_TOLERANCE;
     }
 
     // --------------------------------------------------
@@ -208,8 +146,9 @@ export class CameraRig {
     // vista, dove p è la profondità di quel punto lungo la direzione di
     // vista (del centro della Terra se il cursore è nello spazio).
     //
-    // Con la telecamera ECI lo spostamento viene acquisito come movimento
-    // dell'utente; con quella ECEF resta solidale con la Terra.
+    // Come ogni movimento fatto con il mouse, lo spostamento è
+    // riconosciuto da takeUserMove() e registrato nella telecamera del
+    // modello mostrata.
 
     // Registra i gestori di inizio, movimento e fine del pan.
     #installPan() {

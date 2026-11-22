@@ -3,9 +3,10 @@
 // Terra in rotazione.
 //
 // Contiene ciò che è comune a tutte le particelle: modello di Terra,
-// tempo simulato, integrazione e urti. Lo stato e le condizioni
-// iniziali di ogni particella sono in Particle; i metodi di
-// integrazione ricevono la particella su cui agire.
+// tempo simulato, integrazione e urti, e le due telecamere (ferma in
+// ECI e ferma in ECEF), che non partecipano alla dinamica. Lo stato e
+// le condizioni iniziali di ogni particella sono in Particle; i metodi
+// di integrazione ricevono la particella su cui agire.
 //
 // Non dipende dal livello di presentazione (né Viewer, né DOM, né
 // orologio di Cesium): usa solo le classi matematiche di Cesium, quindi
@@ -19,6 +20,8 @@
 // ============================================================
 
 import * as Cesium from "cesium";
+import { bySystem } from "../geometry/referenceFrames.js";
+import { Camera } from "./camera.js";
 import { ELLIPSOIDAL_EARTH, SPHERICAL_EARTH } from "./earth.js";
 import { Particle } from "./particle.js";
 
@@ -29,10 +32,13 @@ const CONTACT_BISECTIONS = 40;        // Iterazioni per l'istante di contatto
 
 export class Simulation {
     // Modello di Terra usato da gravità e urti: sfera (true) o
-    // ellissoide WGS84 con J2 (false).
+    // ellissoide WGS84 con J2 e J4 (false).
     useSphericalEarth = true;
 
     particle = new Particle();
+
+    // Telecamere ferme in ECI e in ECEF. Il reset non le sposta.
+    cameras = bySystem((system) => new Camera(system));
 
     time = 0; // Istante simulato a cui si riferisce lo stato [s]
 

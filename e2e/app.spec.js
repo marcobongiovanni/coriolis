@@ -430,18 +430,31 @@ function expectSamePose(a, b) {
     expect(distance(a.up, b.up)).toBeLessThan(1e-9);
 }
 
-test("cambio di telecamera ECI/ECEF senza cambio di vista", async ({ page }) => {
+// Pan con Shift + trascinamento destro da "from" a "to" (coordinate
+// nella pagina), poi attesa della fine dell'inerzia.
+async function shiftRightDrag(page, from, to) {
+    await page.keyboard.down("Shift");
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down({ button: "right" });
+    await page.mouse.move(to.x, to.y, { steps: 10 });
+    await page.mouse.up({ button: "right" });
+    await page.keyboard.up("Shift");
+    await page.waitForTimeout(300);
+}
+
+test("telecamere ECI ed ECEF indipendenti", async ({ page }) => {
     const errors = await openApp(page);
     const eciRadio = page.getByLabel("Telecamera ECI");
     const ecefRadio = page.getByLabel("Telecamera ECEF");
+    const cameraMode = () => page.evaluate(() => window.__coriolis.cameraMode);
 
     // Predefinita: telecamera ECI, con l'inquadratura iniziale.
     await expect(eciRadio).toBeChecked();
     await expect(ecefRadio).not.toBeChecked();
     await expectEarthFramedOnStartPoint(page);
 
-    // Simulazione avanzata in ECI: la telecamera è ferma in ECI, quindi
-    // in ECEF ruota di -ω·Δt attorno all'asse Z.
+    // La telecamera ECI è ferma nello spazio: vista dalla Terra ruota di
+    // -ω·Δt attorno all'asse Z.
     const start = await cameraPose(page);
     await runFor(page, 1000);
     const eciLater = await cameraPose(page);
@@ -449,43 +462,30 @@ test("cambio di telecamera ECI/ECEF senza cambio di vista", async ({ page }) => 
     expect(dt).toBeGreaterThan(0);
     expect(distance(eciLater.position, rotateEcef(start.position, dt))).toBeLessThan(1);
 
-    // Passaggio a ECEF (in pausa): la vista non cambia.
+    // La telecamera ECEF ha la sua posa: l'inquadratura iniziale, ferma
+    // rispetto alla Terra anche mentre il tempo scorre.
     await ecefRadio.check();
-    expect(await page.evaluate(() => window.__coriolis.cameraMode)).toBe("ecef");
-    const atEcefSwitch = await cameraPose(page);
-    expectSamePose(atEcefSwitch, eciLater);
-
-    // In ECEF la telecamera resta ferma rispetto alla Terra.
+    expect(await cameraMode()).toBe("ecef");
+    expectSamePose(await cameraPose(page), start);
     await runFor(page, 1000);
-    const ecefLater = await cameraPose(page);
-    expect(ecefLater.time).toBeGreaterThan(atEcefSwitch.time);
-    expectSamePose(ecefLater, atEcefSwitch);
+    expectSamePose(await cameraPose(page), start);
 
-    // Ritorno a ECI durante la simulazione: la vista non cambia, poi
-    // la telecamera torna a restare ferma in ECI.
-    await playButton(page).click();
-    await page.waitForTimeout(300);
-    const beforeEciSwitch = await cameraPose(page);
+    // Spostare la telecamera ECEF non cambia quella ECI.
+    const box = await page.locator("#cesiumContainer canvas").first().boundingBox();
+    const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await shiftRightDrag(page, center, { x: center.x + 150, y: center.y });
+    const ecefMoved = await cameraPose(page);
+    expect(distance(ecefMoved.position, start.position)).toBeGreaterThan(1000);
+
     await eciRadio.check();
-    await playButton(page).click();
-    expect(await page.evaluate(() => window.__coriolis.cameraMode)).toBe("eci");
-    const atEciSwitch = await cameraPose(page);
-    // Nessun salto: fino al cambio la telecamera è ferma in ECEF, dopo
-    // ruota con la Terra; lo spostamento non può superare la rotazione
-    // di tutto l'intervallo.
-    const maxRotation = distance(
-        beforeEciSwitch.position,
-        rotateEcef(beforeEciSwitch.position, atEciSwitch.time - beforeEciSwitch.time)
-    );
-    expect(distance(atEciSwitch.position, beforeEciSwitch.position))
-        .toBeLessThanOrEqual(maxRotation + 1);
-
-    await runFor(page, 1000);
+    expect(await cameraMode()).toBe("eci");
     const eciAgain = await cameraPose(page);
-    expect(distance(
-        eciAgain.position,
-        rotateEcef(atEciSwitch.position, eciAgain.time - atEciSwitch.time)
-    )).toBeLessThan(1);
+    expect(distance(eciAgain.position, rotateEcef(start.position, eciAgain.time - start.time)))
+        .toBeLessThan(1);
+
+    // Tornando alla telecamera ECEF si ritrova la posa spostata.
+    await ecefRadio.check();
+    expectSamePose(await cameraPose(page), ecefMoved);
     await expectNoErrors(page, errors);
 });
 
@@ -516,13 +516,11 @@ test("pan con Shift + trascinamento destro: trasla senza ruotare", async ({ page
         }, start);
         expect(before.grabbed).toBeDefined();
 
-        await page.keyboard.down("Shift");
-        await page.mouse.move(box.x + start.x, box.y + start.y);
-        await page.mouse.down({ button: "right" });
-        await page.mouse.move(box.x + start.x + delta.x, box.y + start.y + delta.y, { steps: 10 });
-        await page.mouse.up({ button: "right" });
-        await page.keyboard.up("Shift");
-        await page.waitForTimeout(300);
+        await shiftRightDrag(
+            page,
+            { x: box.x + start.x, y: box.y + start.y },
+            { x: box.x + start.x + delta.x, y: box.y + start.y + delta.y }
+        );
 
         const after = await page.evaluate((grabbed) => {
             const { viewer } = window.__coriolis;
@@ -577,13 +575,7 @@ test("pan verticale in ECI: la Terra supera il centro della vista", async ({ pag
     const initial = await state();
     let previousY = initial.centerY;
     for (let i = 0; i < 4; i++) {
-        await page.keyboard.down("Shift");
-        await page.mouse.move(x, y);
-        await page.mouse.down({ button: "right" });
-        await page.mouse.move(x, y - 200, { steps: 10 });
-        await page.mouse.up({ button: "right" });
-        await page.keyboard.up("Shift");
-        await page.waitForTimeout(300);
+        await shiftRightDrag(page, { x: x, y: y }, { x: x, y: y - 200 });
 
         const current = await state();
         expect(current.centerY).toBeLessThan(previousY - 50);

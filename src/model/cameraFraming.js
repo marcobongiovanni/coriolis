@@ -2,11 +2,11 @@
 // cameraFraming.js — Inquadratura iniziale: particella vista da
 // sud-sud-est con la Terra intera nella vista.
 //
-// Funzioni pure (nessun accesso al Viewer): la vista fornisce solo la
-// tangente del semiangolo del campo visivo lungo la larghezza.
+// Funzioni pure, usate da Camera: della vista serve solo la tangente
+// del semiangolo del campo visivo lungo la larghezza.
 //
-// La telecamera guarda il centro della sfera della particella da una direzione fissa
-// nella terna locale Est-Nord-Su del punto di partenza:
+// La telecamera guarda il centro della sfera della particella da una
+// direzione fissa nella terna locale Est-Nord-Su del punto di partenza:
 //   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
 //   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
 // Il vettore Up sta nel piano formato dalla direzione di vista e dalla
@@ -18,7 +18,7 @@
 // ============================================================
 
 import * as Cesium from "cesium";
-import { directionEnu, enuRotation } from "../../geometry/referenceFrames.js";
+import { directionEnu, enuRotation } from "../geometry/referenceFrames.js";
 
 const CAMERA_AZIMUTH_DEG = 150;    // Dal Nord, in senso orario [°]
 const CAMERA_ELEVATION_DEG = 45;   // Sopra l'orizzonte locale [°]

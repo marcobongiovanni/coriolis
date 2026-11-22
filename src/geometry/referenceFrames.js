@@ -30,6 +30,13 @@ export function earthRotationAngle(seconds) {
     return OMEGA * seconds;
 }
 
+// Angolo da passare a eciToEcef per portare in ECEF, all'istante
+// "seconds", coordinate di un oggetto fermo nel sistema "system":
+// l'angolo terrestre per "eci", 0 per "ecef" (già in ECEF).
+export function systemToEcefAngle(system, seconds) {
+    return system === "eci" ? earthRotationAngle(seconds) : 0;
+}
+
 // Rotazione attorno all'asse Z (comune a ECI ed ECEF) di "angle".
 // "result" può coincidere con "vector".
 function rotateAboutZ(vector, angle, result) {
