@@ -8,10 +8,12 @@ import * as Cesium from "cesium";
 import {
     REFERENCE_SYSTEMS,
     bySystem,
+    coriolisAcceleration,
     dragVelocity,
     enuRotation,
     normalizeDegrees,
-    relativeVelocity
+    relativeVelocity,
+    tangentialComponent
 } from "../src/geometry/referenceFrames.js";
 import { OMEGA } from "../src/model/rotationAxis.js";
 
@@ -52,7 +54,29 @@ describe("terna Est-Nord-Su da una verticale", function () {
     });
 });
 
+describe("componente tangenziale", function () {
+    it("toglie la componente lungo la normale e lascia il resto", function () {
+        const normal = Cesium.Cartesian3.normalize(new Cesium.Cartesian3(1, 1, 0), new Cesium.Cartesian3());
+        const v = new Cesium.Cartesian3(3, 1, 5);
+        const t = tangentialComponent(v, normal);
+        expect(Cesium.Cartesian3.dot(t, normal)).toBeCloseTo(0, 12);
+        expect(Cesium.Cartesian3.distance(t, new Cesium.Cartesian3(1, -1, 5))).toBeLessThan(1e-12);
+    });
+});
+
 describe("velocità in un sistema rotante", function () {
+    it("accelerazione di Coriolis: -2 ω × v_rel, nulla per moto parallelo all'asse", function () {
+        // All'equatore (punto sull'asse X) l'Est è +Y e il Nord +Z. Per
+        // v_rel verso Est l'accelerazione punta verso l'esterno (+X), di
+        // modulo 2ωv; per v_rel verso Nord (parallela a ω) è nulla.
+        const east = new Cesium.Cartesian3(0, 100, 0);
+        const a = coriolisAcceleration(OMEGA_Z, east);
+        expect(a.x).toBeCloseTo(2 * OMEGA * 100, 15);
+        expect(a.y).toBeCloseTo(0, 15);
+        expect(a.z).toBeCloseTo(0, 15);
+        expect(Cesium.Cartesian3.magnitude(coriolisAcceleration(OMEGA_Z, new Cesium.Cartesian3(0, 0, 100)))).toBe(0);
+    });
+
     it("velocità di trascinamento: ω × r, verso Est di modulo ω·ρ", function () {
         const r = new Cesium.Cartesian3(7e6, 0, 2e6);
         const drag = dragVelocity(OMEGA_Z, r);

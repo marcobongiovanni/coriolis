@@ -27,24 +27,27 @@
 //   - stato iniziale e stato corrente, in ECI;
 //   - grandezze derivate (quota, centro della sfera, energia);
 //   - frecce della velocità assoluta e relativa;
+//   - freccia della componente orizzontale dell'accelerazione di
+//     Coriolis;
 //   - terne locali assoluta e relativa nel punto di partenza;
 //   - traiettorie assoluta e relativa del centro della sfera;
 //   - punto di partenza.
 // Frecce, terne, traiettorie e punto di partenza sono nodi della scena
 // che Simulation appende a World (assoluti, chiave "eci") o alla Terra
-// (relativi, chiave "ecef"), non alla particella: la particella li
-// conserva come riferimenti.
+// (relativi, chiave "ecef"; la freccia di Coriolis e il punto di
+// partenza), non alla particella: la particella li conserva come
+// riferimenti.
 //
 // Ciò che è comune a tutte le particelle (modello di Terra, tempo,
 // integrazione) è in Simulation. Il modello di Terra viene passato ai
 // metodi che ne dipendono.
 //
 // Le modifiche delle condizioni iniziali hanno effetto alla successiva
-// chiamata di reset(earth) (Simulation.reset()).
+// chiamata di reset(earthModel) (Simulation.reset()).
 // ============================================================
 
 import * as Cesium from "cesium";
-import { bySystem, normalizeDegrees } from "../geometry/referenceFrames.js";
+import { bySystem, normalizeDegrees, tangentialComponent } from "../geometry/referenceFrames.js";
 import { Arrow } from "./arrow.js";
 import { EnuFrame } from "./enuFrame.js";
 import { SceneNode } from "./sceneNode.js";
@@ -92,12 +95,18 @@ export class Particle extends SceneNode {
         position: new Cesium.Cartesian3(),     // Baricentro
         velocity: new Cesium.Cartesian3(),     // Velocità del baricentro
         altitude: 0,                           // Quota del baricentro [m]
+        normal: new Cesium.Cartesian3(),       // Normale locale nel baricentro (nulla se non definita)
         sphereCenter: new Cesium.Cartesian3()  // Centro della sfera disegnata
     };
 
     // Velocità corrente: assoluta (eci) e relativa (ecef), disegnate
     // nel centro della sfera.
     velocityArrows;
+
+    // Componente orizzontale (perpendicolare alla normale locale)
+    // dell'accelerazione di Coriolis corrente -2 ω × v_rel, disegnata nel
+    // centro della sfera (figlia della Terra).
+    coriolisArrow;
 
     // Terne locali assoluta (eci) e relativa (ecef), con origine nel
     // centro della sfera a t = 0.
@@ -112,7 +121,6 @@ export class Particle extends SceneNode {
 
     #rotationAxis; // Asse di rotazione terrestre (velocità di trascinamento)
     #scratchPoint = new Cesium.Cartesian3();
-    #scratchNormal = new Cesium.Cartesian3();
 
     // "rotationAxis": asse di rotazione terrestre (RotationAxis);
     // "radius": raggio della sfera disegnata [m].
@@ -127,6 +135,10 @@ export class Particle extends SceneNode {
             ecef: (state, result) => rotationAxis.relativeVelocity(state.position, state.velocity, result)
         };
         this.velocityArrows = bySystem((system) => new Arrow(this, quantities[system]));
+        this.coriolisArrow = new Arrow(this, (state, result) => {
+            const coriolis = rotationAxis.coriolisAcceleration(state.position, state.velocity, result);
+            return tangentialComponent(coriolis, state.normal, coriolis);
+        });
         this.startFrames = bySystem(() => new EnuFrame());
         this.trajectories = bySystem(() => new Trajectory());
         this.startPoint = new StartPoint();
@@ -162,9 +174,9 @@ export class Particle extends SceneNode {
     // STATO
     // --------------------------------------------------
 
-    // Calcola lo stato iniziale sul modello di Terra "earth", vi riporta
+    // Calcola lo stato iniziale sul modello di Terra "earthModel", vi riporta
     // lo stato corrente e fa ripartire le traiettorie.
-    reset(earth) {
+    reset(earthModel) {
         const C3 = Cesium.Cartesian3;
         const initial = this.initial;
 
@@ -172,14 +184,14 @@ export class Particle extends SceneNode {
         // superficie del modello nel punto di partenza (portato nelle
         // coordinate della particella a t = 0).
         const surfacePoint = this.startPoint.positionIn(this, 0, this.#scratchPoint);
-        earth.pointAboveSurface(surfacePoint, this.start.altitude, initial.position);
+        earthModel.pointAboveSurface(surfacePoint, this.start.altitude, initial.position);
         C3.clone(initial.position, this.state.position);
-        this.updateDerivedState(earth);
+        this.updateDerivedState(earthModel);
         C3.clone(this.state.sphereCenter, initial.sphereCenter);
 
         // Terne con origine nel centro della sfera e asse Su lungo la
         // normale locale del modello di Terra.
-        earth.heightAboveSurface(initial.position, initial.normal);
+        C3.clone(this.state.normal, initial.normal);
         Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter, initial.normal, this));
         this.#computeInitialVelocity();
         C3.clone(initial.velocity.eci, this.state.velocity);
@@ -198,19 +210,21 @@ export class Particle extends SceneNode {
 
     // Distanza con segno del baricentro dalla superficie, lungo la
     // normale (scritta in "normalResult"); undefined se non definita.
-    clearance(earth, normalResult) {
-        return earth.heightAboveSurface(this.state.position, normalResult);
+    clearance(earthModel, normalResult) {
+        return earthModel.heightAboveSurface(this.state.position, normalResult);
     }
 
     // Aggiorna le grandezze derivate dalla posizione del baricentro:
-    // quota (0 se non definita) e centro della sfera, a un raggio dal
-    // baricentro lungo la verticale locale.
-    updateDerivedState(earth) {
+    // quota (0 se non definita), normale locale (nulla se non definita) e
+    // centro della sfera, a un raggio dal baricentro lungo la verticale
+    // locale.
+    updateDerivedState(earthModel) {
         const state = this.state;
-        const normal = this.#scratchNormal;
-        const h = this.clearance(earth, normal);
+        const normal = state.normal;
+        const h = this.clearance(earthModel, normal);
         state.altitude = Cesium.defined(h) ? h : 0;
         if (!Cesium.defined(h)) {
+            Cesium.Cartesian3.clone(Cesium.Cartesian3.ZERO, normal);
             Cesium.Cartesian3.clone(state.position, state.sphereCenter);
             return;
         }
@@ -220,9 +234,9 @@ export class Particle extends SceneNode {
 
     // Energia meccanica specifica nel sistema ECI [J/kg]: si conserva
     // durante il moto (utile per verificare l'integrazione).
-    mechanicalEnergy(earth) {
+    mechanicalEnergy(earthModel) {
         return 0.5 * Cesium.Cartesian3.magnitudeSquared(this.state.velocity) +
-            earth.potential(this.state.position);
+            earthModel.potential(this.state.position);
     }
 
     // A t = 0 le due terne di velocità sono legate da

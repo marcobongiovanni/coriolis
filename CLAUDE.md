@@ -9,6 +9,9 @@
 ## Architecture of the project
 - For the architecture refer to the file ARCHITECTURE.md.
 
+## Model diagram
+- MODEL.md contains the class diagram of the model and the scene hierarchy. When the model changes (classes, inheritance, relations, scene hierarchy), update MODEL.md in the same change.
+
 ## Glossary
 - For the terms used in the project and in our conversations refer to the file GLOSSARY.md.
 

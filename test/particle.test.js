@@ -10,7 +10,7 @@ import { EARTH_RADIUS, SPHERICAL_EARTH } from "../src/model/earth.js";
 import { DEFAULT_PARTICLE_RADIUS, Particle } from "../src/model/particle.js";
 import { OMEGA, RotationAxis } from "../src/model/rotationAxis.js";
 import { TRAJECTORY_MIN_DISTANCE, Trajectory } from "../src/model/trajectory.js";
-import { createParticle, earthOf, eciToEcef } from "./helpers.js";
+import { createParticle, createSimulation, eciToEcef } from "./helpers.js";
 
 function dragVelocity(r) {
     return new Cesium.Cartesian3(-OMEGA * r.y, OMEGA * r.x, 0);
@@ -164,9 +164,9 @@ describe("frecce della velocità", function () {
     });
 
     it("in ECEF: applicate nel centro della sfera e ruotate con la Terra", function () {
-        const particle = createParticle({ ecef: {speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
+        const { particle, earth } = createSimulation({ ecef: { speedKmh: 1000, azimuthDeg: 45, elevationDeg: 30 } });
         const t = 1800;
-        const { position: origin, vector } = particle.velocityArrows.eci.expressedIn(earthOf(particle), t);
+        const { position: origin, vector } = particle.velocityArrows.eci.expressedIn(earth, t);
         expect(Cesium.Cartesian3.distance(origin, eciToEcef(particle.state.sphereCenter, OMEGA * t))).toBeLessThan(1e-6);
         expect(Cesium.Cartesian3.distance(vector, eciToEcef(particle.state.velocity, OMEGA * t))).toBeLessThan(1e-9);
     });
@@ -174,10 +174,10 @@ describe("frecce della velocità", function () {
 
 describe("terne nel punto di partenza", function () {
     it("hanno origine nel centro iniziale della sfera e assi Est, Nord, Su", function () {
-        const particle = createParticle({ latitude: 30, longitude: 100 });
+        const { particle, earth } = createSimulation({ latitude: 30, longitude: 100 });
         const enu = enuRotation(particle.initial.normal);
         Object.values(particle.startFrames).forEach((frame) => {
-            const { position: origin, axes } = frame.poseIn(earthOf(particle), 0);
+            const { position: origin, axes } = frame.poseIn(earth, 0);
             expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
             axes.forEach((axis, i) => {
                 const expected = Cesium.Matrix3.getColumn(enu, i, new Cesium.Cartesian3());
@@ -200,20 +200,20 @@ describe("terne nel punto di partenza", function () {
     });
 
     it("vista dalla Terra, la terna ECEF resta ferma e quella ECI ruota", function () {
-        const particle = createParticle();
+        const { particle, earth } = createSimulation();
         const t = 3600;
-        const ecef = particle.startFrames.ecef.poseIn(earthOf(particle), t);
-        const eci = particle.startFrames.eci.poseIn(earthOf(particle), t);
+        const ecef = particle.startFrames.ecef.poseIn(earth, t);
+        const eci = particle.startFrames.eci.poseIn(earth, t);
         expect(Cesium.Cartesian3.distance(ecef.position, particle.initial.sphereCenter)).toBeLessThan(1e-6);
         const rotated = eciToEcef(particle.initial.sphereCenter, OMEGA * t);
         expect(Cesium.Cartesian3.distance(eci.position, rotated)).toBeLessThan(1e-6);
     });
 
     it("seguono il punto di partenza al reset", function () {
-        const particle = createParticle();
+        const { particle, earth } = createSimulation();
         particle.setStartPoint(-20, 200);
         particle.reset(SPHERICAL_EARTH);
-        const { position: origin } = particle.startFrames.ecef.poseIn(earthOf(particle), 0);
+        const { position: origin } = particle.startFrames.ecef.poseIn(earth, 0);
         expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
     });
 });

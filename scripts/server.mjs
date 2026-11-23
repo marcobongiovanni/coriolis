@@ -12,11 +12,9 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { build } from "./build.mjs";
+import { ROOT, build } from "./build.mjs";
 import { spawn } from "node:child_process";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Build NON minificata, come in Sandcastle: mantiene i controlli
 // DeveloperError (es. "This object was destroyed") che la build
 // minificata elimina, così gli errori emergono anche in locale.

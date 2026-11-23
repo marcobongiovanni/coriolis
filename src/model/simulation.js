@@ -11,7 +11,8 @@
 //   World (radice, coordinate ECI)
 //     -> Terra (coordinate ECEF, contiene il modello di Terra attivo)
 //          -> terna locale relativa, traiettoria relativa,
-//             freccia della velocità relativa, Telecamera ECEF,
+//             freccia della velocità relativa,
+//             freccia dell'accelerazione di Coriolis, Telecamera ECEF,
 //             punto di partenza
 //     -> asse di rotazione
 //     -> particella
@@ -89,6 +90,7 @@ export class Simulation {
         earth.addChild(particle.startFrames.ecef);    // Terna locale relativa
         earth.addChild(particle.trajectories.ecef);   // Traiettoria relativa
         earth.addChild(particle.velocityArrows.ecef); // Freccia della velocità relativa
+        earth.addChild(particle.coriolisArrow);       // Freccia dell'accelerazione di Coriolis
         earth.addChild(cameras.ecef);
         earth.addChild(particle.startPoint);
     }
@@ -205,16 +207,16 @@ export class Simulation {
     //   v += ½·(a0 + a1)·h
     #verletStep(particle, h) {
         const C3 = Cesium.Cartesian3;
-        const earth = this.earth.model;
+        const earthModel = this.earth.model;
         const p = particle.state.position;
         const v = particle.state.velocity;
         const temp = this.#scratch.temp;
 
-        const a0 = earth.gravity(p, this.#scratch.accel0);
+        const a0 = earthModel.gravity(p, this.#scratch.accel0);
         C3.add(p, C3.multiplyByScalar(v, h, temp), p);
         C3.add(p, C3.multiplyByScalar(a0, 0.5 * h * h, temp), p);
 
-        const a1 = earth.gravity(p, this.#scratch.accel1);
+        const a1 = earthModel.gravity(p, this.#scratch.accel1);
         C3.add(v, C3.multiplyByScalar(C3.add(a0, a1, temp), 0.5 * h, temp), v);
     }
 }

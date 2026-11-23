@@ -28,7 +28,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+// Cartella radice del progetto (usata anche da pages.mjs e server.mjs).
+export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = "src/main.js";
 const OUTPUT = path.join(ROOT, "dist", "sandcastle.js");
 const MAP_NAME = "sandcastle.js.map";

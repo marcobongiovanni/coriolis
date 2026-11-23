@@ -39,6 +39,26 @@ export function relativeVelocity(omega, position, velocity, result = new Cesium.
     return Cesium.Cartesian3.subtract(velocity, drag, result);
 }
 
+const scratchAlongNormal = new Cesium.Cartesian3();
+
+// Componente di "vector" perpendicolare al versore "normal", cioè la
+// sua proiezione sul piano tangente: vector - (vector · normal) normal.
+// "result" può coincidere con "vector".
+export function tangentialComponent(vector, normal, result = new Cesium.Cartesian3()) {
+    const along = Cesium.Cartesian3.dot(vector, normal);
+    return Cesium.Cartesian3.subtract(
+        vector, Cesium.Cartesian3.multiplyByScalar(normal, along, scratchAlongNormal), result
+    );
+}
+
+// Accelerazione di Coriolis -2 ω × v_rel di un punto con velocità
+// "relativeVelocity" rispetto al sistema rotante. "result" può
+// coincidere con "relativeVelocity".
+export function coriolisAcceleration(omega, relativeVelocity, result = new Cesium.Cartesian3()) {
+    Cesium.Cartesian3.cross(omega, relativeVelocity, result);
+    return Cesium.Cartesian3.multiplyByScalar(result, -2, result);
+}
+
 // Angolo in gradi ricondotto all'intervallo [0°, 360°). Gli angoli già
 // nell'intervallo restano identici (nessun errore di arrotondamento).
 export function normalizeDegrees(deg) {

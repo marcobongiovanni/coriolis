@@ -23,7 +23,9 @@ si parte da 45° N, 7.1° E.
 ## Struttura
 
 Il codice segue il paradigma **MVVM** (Model - View - ViewModel).
-Le regole dell'architettura sono in [ARCHITECTURE.md](ARCHITECTURE.md).
+Le regole dell'architettura sono in [ARCHITECTURE.md](ARCHITECTURE.md);
+lo schema delle classi del modello e la gerarchia della scena sono in
+[MODEL.md](MODEL.md).
 
 ```
 View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Simulation,
@@ -41,7 +43,7 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 | `src/model/rotationAxis.js` | Model | `RotationAxis`: asse di rotazione terrestre e velocità angolare (unica definizione della rotazione terrestre), velocità di trascinamento e relativa. |
 | `src/model/startPoint.js` | Model | `StartPoint`: punto di partenza sulla superficie (latitudine, longitudine, posizione). |
 | `src/model/particle.js` | Model | `Particle`: punto materiale (baricentro nel punto di contatto) disegnato come sfera; condizioni iniziali e loro regole di validità, stato iniziale e corrente, frecce della velocità, terne e traiettorie. |
-| `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta e quella relativa). |
+| `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta, quella relativa e la componente orizzontale dell'accelerazione di Coriolis). |
 | `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma nel sistema del padre (World o Terra); conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
 | `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della sfera della particella, nel sistema del padre (World o Terra). |
 | `src/model/camera.js`, `cameraFraming.js` | Model | `Camera`: telecamera ferma nel sistema del padre (World o Terra), con la sua posa e l'inquadratura iniziale. |
@@ -71,6 +73,7 @@ che discende da `SceneNode`:
 | Terra | `Earth` (`simulation.earth`) |
 | Particella | `Particle` (`state.position`, `radius`) |
 | Frecce della velocità assoluta e relativa | `Arrow` (`particle.velocityArrows`) |
+| Freccia dell'accelerazione di Coriolis | `Arrow` (`particle.coriolisArrow`) |
 | Punto di partenza | `StartPoint` (`particle.startPoint`) |
 | Traiettorie assoluta e relativa | `Trajectory` (`particle.trajectories`) |
 | Terne locali assoluta e relativa | `EnuFrame` (`particle.startFrames`) |
@@ -86,6 +89,7 @@ World (ECI)
 │   ├── terna locale relativa
 │   ├── traiettoria relativa
 │   ├── freccia della velocità relativa
+│   ├── freccia dell'accelerazione di Coriolis
 │   ├── Telecamera ECEF
 │   └── punto di partenza
 ├── asse di rotazione
@@ -222,6 +226,10 @@ Dipendenze consentite (ogni livello conosce solo quelli alla sua destra):
 - `test/simulation.test.js`: gravità con e senza J2 e J4, superficie, asse
   di rotazione, registrazione della traiettoria, conservazione
   dell'energia, rimbalzi, deriva su Terra sferica ed ellissoidale.
+
+`test/modelDiagram.test.js` verifica che lo schema in `MODEL.md`
+contenga esattamente le classi esportate da `src/model/` e le loro
+ereditarietà.
 
 `test/helpers.js` contiene gli strumenti comuni per creare la gerarchia
 minima della scena e configurare particelle e simulazioni.

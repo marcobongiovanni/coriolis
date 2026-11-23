@@ -4,6 +4,7 @@
         "vitest.explorer",
         "ms-playwright.playwright",
         "editorconfig.editorconfig",
-        "dbaeumer.vscode-eslint"
+        "dbaeumer.vscode-eslint",
+        "bierner.markdown-mermaid"
     ]
 }

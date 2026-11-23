@@ -2,13 +2,13 @@
 // rotationAxis.js — Asse di rotazione terrestre, figlio di World.
 //
 // Unica definizione della rotazione terrestre: la Terra ruota attorno
-// a questo asse (vedi Earth) e la velocità di trascinamento si calcola
-// da qui. La direzione è l'asse Z del nodo (posa identità: asse Z di
+// a questo asse (vedi Earth); velocità di trascinamento, velocità
+// relativa e accelerazione di Coriolis si calcolano da qui. La direzione è l'asse Z del nodo (posa identità: asse Z di
 // World, verso il Polo Nord).
 // ============================================================
 
 import * as Cesium from "cesium";
-import { dragVelocity, relativeVelocity } from "../geometry/referenceFrames.js";
+import { coriolisAcceleration, dragVelocity, relativeVelocity } from "../geometry/referenceFrames.js";
 import { SceneNode } from "./sceneNode.js";
 
 export const OMEGA = 7.292115e-5; // Velocità angolare terrestre [rad/s]
@@ -41,5 +41,13 @@ export class RotationAxis extends SceneNode {
     // con velocità "velocity" (sistema del padre).
     relativeVelocity(position, velocity, result) {
         return relativeVelocity(this.omega, position, velocity, result);
+    }
+
+    // Accelerazione di Coriolis -2 ω × v_rel di un punto in "position"
+    // con velocità "velocity" (sistema del padre).
+    coriolisAcceleration(position, velocity, result) {
+        const omega = this.omega;
+        const relative = relativeVelocity(omega, position, velocity, result);
+        return coriolisAcceleration(omega, relative, relative);
     }
 }

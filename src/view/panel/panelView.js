@@ -38,16 +38,19 @@ const VELOCITY_COLUMNS = [
     ["eci", "assoluta (ECI)"]
 ];
 
-// Righe della sezione Visualizzazione: [etichetta, oggetto].
+// Righe della sezione Visualizzazione: [etichetta, oggetto, sistemi in
+// cui l'oggetto esiste].
 const VISIBILITY_ROWS = [
-    ["Terne", "frame"],
-    ["Traiettoria", "track"],
-    ["Velocità", "velocity"]
+    ["Terne", "frame", REFERENCE_SYSTEMS],
+    ["Traiettoria", "track", REFERENCE_SYSTEMS],
+    ["Velocità", "velocity", REFERENCE_SYSTEMS],
+    ["Coriolis", "coriolis", ["ecef"]]
 ];
 
 const LEGEND = [
     [PALETTE.ecef, "Traiettoria e velocità relative (ECEF)"],
     [PALETTE.eci, "Traiettoria e velocità assolute (ECI)"],
+    [PALETTE.coriolis, "Accelerazione di Coriolis orizzontale (ECEF)"],
     [PALETTE.rotationAxis, "Asse di rotazione terrestre"]
 ];
 
@@ -85,6 +88,15 @@ function showNumber(input, value, force) {
         return;
     }
     input.value = text;
+}
+
+// Griglia di classe "className" con la riga di intestazione: una cella
+// vuota sopra le etichette e i titoli "headings" delle colonne.
+function gridWithHeadings(className, headings) {
+    return element("div", { className: className }, [
+        element("span"),
+        ...headings.map((heading) => element("span", { className: "sim-colhead", textContent: heading }))
+    ]);
 }
 
 // --------------------------------------------------
@@ -284,11 +296,7 @@ export class PanelView {
     // VELOCITY_COLUMNS.
     #buildVelocitySection() {
         const vm = this.#vm;
-        const grid = element("div", { className: "sim-grid" }, [
-            element("span"),
-            element("span", { className: "sim-colhead", textContent: "Relativa (ECEF)" }),
-            element("span", { className: "sim-colhead", textContent: "Assoluta (ECI)" })
-        ]);
+        const grid = gridWithHeadings("sim-grid", ["Relativa (ECEF)", "Assoluta (ECI)"]);
         VELOCITY_ROWS.forEach(([labelText, component, limits]) => {
             grid.append(element("span", { textContent: labelText }));
             VELOCITY_COLUMNS.forEach(([frame, suffix]) => {
@@ -321,14 +329,15 @@ export class PanelView {
         const vm = this.#vm;
         const section = this.#section("Visualizzazione");
 
-        const grid = element("div", { className: "sim-visibility" }, [
-            element("span"),
-            element("span", { className: "sim-colhead", textContent: "Assoluti (ECI)" }),
-            element("span", { className: "sim-colhead", textContent: "Relativi (ECEF)" })
-        ]);
-        VISIBILITY_ROWS.forEach(([labelText, item]) => {
+        const grid = gridWithHeadings("sim-visibility", ["Assoluti (ECI)", "Relativi (ECEF)"]);
+        VISIBILITY_ROWS.forEach(([labelText, item, systems]) => {
             grid.append(element("span", { textContent: labelText }));
             REFERENCE_SYSTEMS.forEach((frame) => {
+                // Cella vuota per i sistemi in cui l'oggetto non esiste.
+                if (!systems.includes(frame)) {
+                    grid.append(element("span"));
+                    return;
+                }
                 const checkbox = element("input", {
                     type: "checkbox",
                     title: labelText + " " + frame.toUpperCase()
@@ -393,7 +402,8 @@ export class PanelView {
             ["Tempo", status.timeSeconds.toFixed(1) + " s"],
             ["Quota", status.altitudeKm.toFixed(1) + " km"],
             ["Velocità ECEF", status.speedEcefKmh.toFixed(0) + " km/h"],
-            ["Velocità ECI", status.speedEciKmh.toFixed(0) + " km/h"]
+            ["Velocità ECI", status.speedEciKmh.toFixed(0) + " km/h"],
+            ["Coriolis ECEF", status.coriolisMs2.toFixed(4) + " m/s²"]
         ].map(([label, value]) => (label + ":").padEnd(STATUS_LABEL_WIDTH) + value).join("\n");
     }
 }

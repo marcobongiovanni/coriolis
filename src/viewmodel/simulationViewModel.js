@@ -10,7 +10,7 @@
 //   Terra                                               -> Earth
 //   particella                                          -> Particle
 //   punto di partenza                                   -> StartPoint
-//   frecce della velocità                               -> Arrow
+//   frecce della velocità e dell'accelerazione di Coriolis -> Arrow
 //   traiettorie                                         -> Trajectory
 //   terne nel punto di partenza                         -> EnuFrame
 //   asse di rotazione                                   -> RotationAxis
@@ -50,7 +50,8 @@ export class SimulationViewModel extends Observable {
     visibility = {
         frame: { eci: true, ecef: true },
         track: { eci: true, ecef: true },
-        velocity: { eci: true, ecef: true }
+        velocity: { eci: true, ecef: true },
+        coriolis: { ecef: true } // Solo relativa alla Terra
     };
 
     #simulation;
@@ -294,6 +295,7 @@ export class SimulationViewModel extends Observable {
         const particlePositionEcef = particle.pointTo(earth, seconds, state.position);
         const velocities = bySystem((system) => particle.velocityArrows[system].expressedIn(earth, seconds));
         const speedKmh = (system) => Cesium.Cartesian3.magnitude(velocities[system].vector) * KMH_PER_MS;
+        const coriolis = particle.coriolisArrow.expressedIn(earth, seconds);
 
         this.#frame = {
             seconds: seconds,
@@ -302,6 +304,9 @@ export class SimulationViewModel extends Observable {
             sphereCenterEcef: particle.pointTo(earth, seconds, state.sphereCenter),
             // Velocità assoluta (eci) e relativa (ecef): { position, vector }.
             velocities: velocities,
+            // Componente orizzontale dell'accelerazione di Coriolis:
+            // { position, vector }.
+            coriolis: coriolis,
             // Terne nel punto di partenza: { position, axes: [E, N, U] }.
             referenceFrames: bySystem((system) => particle.startFrames[system].poseIn(earth, seconds)),
             // Matrici dalle coordinate delle traiettorie (vedi
@@ -312,7 +317,8 @@ export class SimulationViewModel extends Observable {
                 timeSeconds: seconds,
                 altitudeKm: state.altitude / 1000,
                 speedEcefKmh: speedKmh("ecef"),
-                speedEciKmh: speedKmh("eci")
+                speedEciKmh: speedKmh("eci"),
+                coriolisMs2: Cesium.Cartesian3.magnitude(coriolis.vector)
             }
         };
         this.emit("frame", this.#frame);

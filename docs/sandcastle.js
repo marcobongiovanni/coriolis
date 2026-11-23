@@ -45,6 +45,26 @@ function relativeVelocity(omega, position, velocity, result = new Cesium.Cartesi
     return Cesium.Cartesian3.subtract(velocity, drag, result);
 }
 
+const scratchAlongNormal = new Cesium.Cartesian3();
+
+// Componente di "vector" perpendicolare al versore "normal", cioè la
+// sua proiezione sul piano tangente: vector - (vector · normal) normal.
+// "result" può coincidere con "vector".
+function tangentialComponent(vector, normal, result = new Cesium.Cartesian3()) {
+    const along = Cesium.Cartesian3.dot(vector, normal);
+    return Cesium.Cartesian3.subtract(
+        vector, Cesium.Cartesian3.multiplyByScalar(normal, along, scratchAlongNormal), result
+    );
+}
+
+// Accelerazione di Coriolis -2 ω × v_rel di un punto con velocità
+// "relativeVelocity" rispetto al sistema rotante. "result" può
+// coincidere con "relativeVelocity".
+function coriolisAcceleration(omega, relativeVelocity, result = new Cesium.Cartesian3()) {
+    Cesium.Cartesian3.cross(omega, relativeVelocity, result);
+    return Cesium.Cartesian3.multiplyByScalar(result, -2, result);
+}
+
 // Angolo in gradi ricondotto all'intervallo [0°, 360°). Gli angoli già
 // nell'intervallo restano identici (nessun errore di arrotondamento).
 function normalizeDegrees(deg) {
@@ -834,20 +854,23 @@ class Trajectory extends SceneNode {
 //   - stato iniziale e stato corrente, in ECI;
 //   - grandezze derivate (quota, centro della sfera, energia);
 //   - frecce della velocità assoluta e relativa;
+//   - freccia della componente orizzontale dell'accelerazione di
+//     Coriolis;
 //   - terne locali assoluta e relativa nel punto di partenza;
 //   - traiettorie assoluta e relativa del centro della sfera;
 //   - punto di partenza.
 // Frecce, terne, traiettorie e punto di partenza sono nodi della scena
 // che Simulation appende a World (assoluti, chiave "eci") o alla Terra
-// (relativi, chiave "ecef"), non alla particella: la particella li
-// conserva come riferimenti.
+// (relativi, chiave "ecef"; la freccia di Coriolis e il punto di
+// partenza), non alla particella: la particella li conserva come
+// riferimenti.
 //
 // Ciò che è comune a tutte le particelle (modello di Terra, tempo,
 // integrazione) è in Simulation. Il modello di Terra viene passato ai
 // metodi che ne dipendono.
 //
 // Le modifiche delle condizioni iniziali hanno effetto alla successiva
-// chiamata di reset(earth) (Simulation.reset()).
+// chiamata di reset(earthModel) (Simulation.reset()).
 // ============================================================
 
 
@@ -892,12 +915,18 @@ class Particle extends SceneNode {
         position: new Cesium.Cartesian3(),     // Baricentro
         velocity: new Cesium.Cartesian3(),     // Velocità del baricentro
         altitude: 0,                           // Quota del baricentro [m]
+        normal: new Cesium.Cartesian3(),       // Normale locale nel baricentro (nulla se non definita)
         sphereCenter: new Cesium.Cartesian3()  // Centro della sfera disegnata
     };
 
     // Velocità corrente: assoluta (eci) e relativa (ecef), disegnate
     // nel centro della sfera.
     velocityArrows;
+
+    // Componente orizzontale (perpendicolare alla normale locale)
+    // dell'accelerazione di Coriolis corrente -2 ω × v_rel, disegnata nel
+    // centro della sfera (figlia della Terra).
+    coriolisArrow;
 
     // Terne locali assoluta (eci) e relativa (ecef), con origine nel
     // centro della sfera a t = 0.
@@ -912,7 +941,6 @@ class Particle extends SceneNode {
 
     #rotationAxis; // Asse di rotazione terrestre (velocità di trascinamento)
     #scratchPoint = new Cesium.Cartesian3();
-    #scratchNormal = new Cesium.Cartesian3();
 
     // "rotationAxis": asse di rotazione terrestre (RotationAxis);
     // "radius": raggio della sfera disegnata [m].
@@ -927,6 +955,10 @@ class Particle extends SceneNode {
             ecef: (state, result) => rotationAxis.relativeVelocity(state.position, state.velocity, result)
         };
         this.velocityArrows = bySystem((system) => new Arrow(this, quantities[system]));
+        this.coriolisArrow = new Arrow(this, (state, result) => {
+            const coriolis = rotationAxis.coriolisAcceleration(state.position, state.velocity, result);
+            return tangentialComponent(coriolis, state.normal, coriolis);
+        });
         this.startFrames = bySystem(() => new EnuFrame());
         this.trajectories = bySystem(() => new Trajectory());
         this.startPoint = new StartPoint();
@@ -962,9 +994,9 @@ class Particle extends SceneNode {
     // STATO
     // --------------------------------------------------
 
-    // Calcola lo stato iniziale sul modello di Terra "earth", vi riporta
+    // Calcola lo stato iniziale sul modello di Terra "earthModel", vi riporta
     // lo stato corrente e fa ripartire le traiettorie.
-    reset(earth) {
+    reset(earthModel) {
         const C3 = Cesium.Cartesian3;
         const initial = this.initial;
 
@@ -972,14 +1004,14 @@ class Particle extends SceneNode {
         // superficie del modello nel punto di partenza (portato nelle
         // coordinate della particella a t = 0).
         const surfacePoint = this.startPoint.positionIn(this, 0, this.#scratchPoint);
-        earth.pointAboveSurface(surfacePoint, this.start.altitude, initial.position);
+        earthModel.pointAboveSurface(surfacePoint, this.start.altitude, initial.position);
         C3.clone(initial.position, this.state.position);
-        this.updateDerivedState(earth);
+        this.updateDerivedState(earthModel);
         C3.clone(this.state.sphereCenter, initial.sphereCenter);
 
         // Terne con origine nel centro della sfera e asse Su lungo la
         // normale locale del modello di Terra.
-        earth.heightAboveSurface(initial.position, initial.normal);
+        C3.clone(this.state.normal, initial.normal);
         Object.values(this.startFrames).forEach((frame) => frame.placeAt(initial.sphereCenter, initial.normal, this));
         this.#computeInitialVelocity();
         C3.clone(initial.velocity.eci, this.state.velocity);
@@ -998,19 +1030,21 @@ class Particle extends SceneNode {
 
     // Distanza con segno del baricentro dalla superficie, lungo la
     // normale (scritta in "normalResult"); undefined se non definita.
-    clearance(earth, normalResult) {
-        return earth.heightAboveSurface(this.state.position, normalResult);
+    clearance(earthModel, normalResult) {
+        return earthModel.heightAboveSurface(this.state.position, normalResult);
     }
 
     // Aggiorna le grandezze derivate dalla posizione del baricentro:
-    // quota (0 se non definita) e centro della sfera, a un raggio dal
-    // baricentro lungo la verticale locale.
-    updateDerivedState(earth) {
+    // quota (0 se non definita), normale locale (nulla se non definita) e
+    // centro della sfera, a un raggio dal baricentro lungo la verticale
+    // locale.
+    updateDerivedState(earthModel) {
         const state = this.state;
-        const normal = this.#scratchNormal;
-        const h = this.clearance(earth, normal);
+        const normal = state.normal;
+        const h = this.clearance(earthModel, normal);
         state.altitude = Cesium.defined(h) ? h : 0;
         if (!Cesium.defined(h)) {
+            Cesium.Cartesian3.clone(Cesium.Cartesian3.ZERO, normal);
             Cesium.Cartesian3.clone(state.position, state.sphereCenter);
             return;
         }
@@ -1020,9 +1054,9 @@ class Particle extends SceneNode {
 
     // Energia meccanica specifica nel sistema ECI [J/kg]: si conserva
     // durante il moto (utile per verificare l'integrazione).
-    mechanicalEnergy(earth) {
+    mechanicalEnergy(earthModel) {
         return 0.5 * Cesium.Cartesian3.magnitudeSquared(this.state.velocity) +
-            earth.potential(this.state.position);
+            earthModel.potential(this.state.position);
     }
 
     // A t = 0 le due terne di velocità sono legate da
@@ -1053,8 +1087,8 @@ class Particle extends SceneNode {
 // rotationAxis.js — Asse di rotazione terrestre, figlio di World.
 //
 // Unica definizione della rotazione terrestre: la Terra ruota attorno
-// a questo asse (vedi Earth) e la velocità di trascinamento si calcola
-// da qui. La direzione è l'asse Z del nodo (posa identità: asse Z di
+// a questo asse (vedi Earth); velocità di trascinamento, velocità
+// relativa e accelerazione di Coriolis si calcolano da qui. La direzione è l'asse Z del nodo (posa identità: asse Z di
 // World, verso il Polo Nord).
 // ============================================================
 
@@ -1090,6 +1124,14 @@ class RotationAxis extends SceneNode {
     relativeVelocity(position, velocity, result) {
         return relativeVelocity(this.omega, position, velocity, result);
     }
+
+    // Accelerazione di Coriolis -2 ω × v_rel di un punto in "position"
+    // con velocità "velocity" (sistema del padre).
+    coriolisAcceleration(position, velocity, result) {
+        const omega = this.omega;
+        const relative = relativeVelocity(omega, position, velocity, result);
+        return coriolisAcceleration(omega, relative, relative);
+    }
 }
 
 // ---------------------------------------------------- src/model/simulation.js
@@ -1106,7 +1148,8 @@ class RotationAxis extends SceneNode {
 //   World (radice, coordinate ECI)
 //     -> Terra (coordinate ECEF, contiene il modello di Terra attivo)
 //          -> terna locale relativa, traiettoria relativa,
-//             freccia della velocità relativa, Telecamera ECEF,
+//             freccia della velocità relativa,
+//             freccia dell'accelerazione di Coriolis, Telecamera ECEF,
 //             punto di partenza
 //     -> asse di rotazione
 //     -> particella
@@ -1177,6 +1220,7 @@ class Simulation {
         earth.addChild(particle.startFrames.ecef);    // Terna locale relativa
         earth.addChild(particle.trajectories.ecef);   // Traiettoria relativa
         earth.addChild(particle.velocityArrows.ecef); // Freccia della velocità relativa
+        earth.addChild(particle.coriolisArrow);       // Freccia dell'accelerazione di Coriolis
         earth.addChild(cameras.ecef);
         earth.addChild(particle.startPoint);
     }
@@ -1293,16 +1337,16 @@ class Simulation {
     //   v += ½·(a0 + a1)·h
     #verletStep(particle, h) {
         const C3 = Cesium.Cartesian3;
-        const earth = this.earth.model;
+        const earthModel = this.earth.model;
         const p = particle.state.position;
         const v = particle.state.velocity;
         const temp = this.#scratch.temp;
 
-        const a0 = earth.gravity(p, this.#scratch.accel0);
+        const a0 = earthModel.gravity(p, this.#scratch.accel0);
         C3.add(p, C3.multiplyByScalar(v, h, temp), p);
         C3.add(p, C3.multiplyByScalar(a0, 0.5 * h * h, temp), p);
 
-        const a1 = earth.gravity(p, this.#scratch.accel1);
+        const a1 = earthModel.gravity(p, this.#scratch.accel1);
         C3.add(v, C3.multiplyByScalar(C3.add(a0, a1, temp), 0.5 * h, temp), v);
     }
 }
@@ -1471,6 +1515,7 @@ class CesiumSimulationClock extends SimulationClock {
 const PALETTE = {
     eci: "red",            // Traccia e velocità assolute (ECI)
     ecef: "lime",          // Traccia e velocità relative (ECEF)
+    coriolis: "yellow",    // Accelerazione di Coriolis (ECEF)
     rotationAxis: "violet",
     particle: "orange",
     startMarker: "white",
@@ -1672,16 +1717,19 @@ const VELOCITY_COLUMNS = [
     ["eci", "assoluta (ECI)"]
 ];
 
-// Righe della sezione Visualizzazione: [etichetta, oggetto].
+// Righe della sezione Visualizzazione: [etichetta, oggetto, sistemi in
+// cui l'oggetto esiste].
 const VISIBILITY_ROWS = [
-    ["Terne", "frame"],
-    ["Traiettoria", "track"],
-    ["Velocità", "velocity"]
+    ["Terne", "frame", REFERENCE_SYSTEMS],
+    ["Traiettoria", "track", REFERENCE_SYSTEMS],
+    ["Velocità", "velocity", REFERENCE_SYSTEMS],
+    ["Coriolis", "coriolis", ["ecef"]]
 ];
 
 const LEGEND = [
     [PALETTE.ecef, "Traiettoria e velocità relative (ECEF)"],
     [PALETTE.eci, "Traiettoria e velocità assolute (ECI)"],
+    [PALETTE.coriolis, "Accelerazione di Coriolis orizzontale (ECEF)"],
     [PALETTE.rotationAxis, "Asse di rotazione terrestre"]
 ];
 
@@ -1719,6 +1767,15 @@ function showNumber(input, value, force) {
         return;
     }
     input.value = text;
+}
+
+// Griglia di classe "className" con la riga di intestazione: una cella
+// vuota sopra le etichette e i titoli "headings" delle colonne.
+function gridWithHeadings(className, headings) {
+    return element("div", { className: className }, [
+        element("span"),
+        ...headings.map((heading) => element("span", { className: "sim-colhead", textContent: heading }))
+    ]);
 }
 
 // --------------------------------------------------
@@ -1918,11 +1975,7 @@ class PanelView {
     // VELOCITY_COLUMNS.
     #buildVelocitySection() {
         const vm = this.#vm;
-        const grid = element("div", { className: "sim-grid" }, [
-            element("span"),
-            element("span", { className: "sim-colhead", textContent: "Relativa (ECEF)" }),
-            element("span", { className: "sim-colhead", textContent: "Assoluta (ECI)" })
-        ]);
+        const grid = gridWithHeadings("sim-grid", ["Relativa (ECEF)", "Assoluta (ECI)"]);
         VELOCITY_ROWS.forEach(([labelText, component, limits]) => {
             grid.append(element("span", { textContent: labelText }));
             VELOCITY_COLUMNS.forEach(([frame, suffix]) => {
@@ -1955,14 +2008,15 @@ class PanelView {
         const vm = this.#vm;
         const section = this.#section("Visualizzazione");
 
-        const grid = element("div", { className: "sim-visibility" }, [
-            element("span"),
-            element("span", { className: "sim-colhead", textContent: "Assoluti (ECI)" }),
-            element("span", { className: "sim-colhead", textContent: "Relativi (ECEF)" })
-        ]);
-        VISIBILITY_ROWS.forEach(([labelText, item]) => {
+        const grid = gridWithHeadings("sim-visibility", ["Assoluti (ECI)", "Relativi (ECEF)"]);
+        VISIBILITY_ROWS.forEach(([labelText, item, systems]) => {
             grid.append(element("span", { textContent: labelText }));
             REFERENCE_SYSTEMS.forEach((frame) => {
+                // Cella vuota per i sistemi in cui l'oggetto non esiste.
+                if (!systems.includes(frame)) {
+                    grid.append(element("span"));
+                    return;
+                }
                 const checkbox = element("input", {
                     type: "checkbox",
                     title: labelText + " " + frame.toUpperCase()
@@ -2027,7 +2081,8 @@ class PanelView {
             ["Tempo", status.timeSeconds.toFixed(1) + " s"],
             ["Quota", status.altitudeKm.toFixed(1) + " km"],
             ["Velocità ECEF", status.speedEcefKmh.toFixed(0) + " km/h"],
-            ["Velocità ECI", status.speedEciKmh.toFixed(0) + " km/h"]
+            ["Velocità ECI", status.speedEciKmh.toFixed(0) + " km/h"],
+            ["Coriolis ECEF", status.coriolisMs2.toFixed(4) + " m/s²"]
         ].map(([label, value]) => (label + ":").padEnd(STATUS_LABEL_WIDTH) + value).join("\n");
     }
 }
@@ -2378,12 +2433,22 @@ class TrackLayer {
 // ============================================================
 
 
-// Frecce della velocità istantanea: partono dalla superficie della
-// particella; la lunghezza è lo spazio percorso in VELOCITY_ARROW_SECONDS
-// a velocità costante (es. 1 km/s -> 600 km).
-const VELOCITY_ARROW_SECONDS = 600; // [s]
-const VELOCITY_ARROW_WIDTH = 12;    // [px] (serve per la punta)
-const VELOCITY_ARROW_MIN_SPEED = 1; // [m/s] sotto: freccia nascosta
+// Frecce: partono dalla superficie della sfera della particella e sono
+// lunghe "metersPerUnit" metri per unità della grandezza; sotto
+// "minMagnitude" sono nascoste.
+const ARROW_WIDTH = 12; // [px] (serve per la punta)
+
+// Velocità: lunghezza pari allo spazio percorso in 600 s a velocità
+// costante (es. 1 km/s -> 600 km).
+const VELOCITY_ARROW = { metersPerUnit: 600, minMagnitude: 1 }; // [m per m/s], [m/s]
+
+// Componente orizzontale dell'accelerazione di Coriolis (2ω·v·sin φ per
+// velocità relativa orizzontale alla latitudine φ): scala scelta perché
+// ai poli la freccia sia lunga circa il doppio di quella della velocità
+// relativa (2 · 600 s / 2ω ≈ 8·10⁶ s²), alla latitudine φ sin φ volte
+// tanto. La soglia corrisponde a circa 0,7 m/s di velocità relativa ai
+// poli.
+const CORIOLIS_ARROW = { metersPerUnit: 8e6, minMagnitude: 1e-4 }; // [m per m/s²], [m/s²]
 
 // Asse di rotazione: solo i due tratti esterni, dalla superficie di
 // ciascun polo verso lo spazio (nulla traspare attraverso il globo).
@@ -2410,6 +2475,7 @@ class SceneView {
     #vm;
     #camera;
     #arrows;
+    #coriolisArrow;
     #tracks;
     #framePolylines;
     #startMarker;
@@ -2422,7 +2488,12 @@ class SceneView {
         this.#camera = new CameraRig(viewer);
 
         this.#addParticle();
-        this.#arrows = bySystem((system) => this.#addVelocityArrow(system));
+        this.#arrows = bySystem((system) => this.#addArrow(
+            VELOCITY_ARROW_NAMES[system], PALETTE[system], (frame) => frame.velocities[system], VELOCITY_ARROW
+        ));
+        this.#coriolisArrow = this.#addArrow(
+            "Accelerazione di Coriolis orizzontale (ECEF)", PALETTE.coriolis, (frame) => frame.coriolis, CORIOLIS_ARROW
+        );
         this.#tracks = bySystem((system) => new TrackLayer(viewer.scene.primitives, color(PALETTE[system])));
         this.#addRotationAxis();
         this.#startMarker = this.#addStartMarker();
@@ -2442,6 +2513,7 @@ class SceneView {
     get testObjects() {
         return {
             arrows: this.#arrows,
+            coriolisArrow: this.#coriolisArrow,
             frames: this.#framePolylines
         };
     }
@@ -2489,6 +2561,7 @@ class SceneView {
                 polyline.show = vm.visibility.frame[system];
             });
         });
+        this.#coriolisArrow.show = vm.visibility.coriolis.ecef;
 
         if (!Cesium.Cartesian3.equals(this.#markerPoint, vm.startSurfacePoint)) {
             this.#markerPoint = Cesium.Cartesian3.clone(vm.startSurfacePoint);
@@ -2511,7 +2584,7 @@ class SceneView {
     }
 
     // --------------------------------------------------
-    // PARTICELLA E FRECCE DELLA VELOCITÀ
+    // PARTICELLA E FRECCE
     // --------------------------------------------------
 
     #addParticle() {
@@ -2528,37 +2601,39 @@ class SceneView {
         });
     }
 
-    // Freccia della velocità assoluta ("eci") o relativa ("ecef"),
-    // aggiornata da Cesium a ogni frame.
-    #addVelocityArrow(system) {
-        const velocityAt = (time) => this.#frameAt(time).velocities[system];
+    // Freccia di nome "name" e colore "cssColor", aggiornata da Cesium a
+    // ogni frame. "arrowOf(frame)" ricava dallo stato dell'istante la
+    // freccia { position, vector } (ECEF); "scale" è { metersPerUnit,
+    // minMagnitude } (vedi le costanti delle frecce).
+    #addArrow(name, cssColor, arrowOf, scale) {
+        const arrowAt = (time) => arrowOf(this.#frameAt(time));
         const positions = (time) => {
-            const { position: center, vector: velocity } = velocityAt(time);
-            const speed = Cesium.Cartesian3.magnitude(velocity);
-            if (speed < VELOCITY_ARROW_MIN_SPEED) {
+            const { position: center, vector } = arrowAt(time);
+            const magnitude = Cesium.Cartesian3.magnitude(vector);
+            if (magnitude < scale.minMagnitude) {
                 return [Cesium.Cartesian3.clone(center), Cesium.Cartesian3.clone(center)];
             }
-            const direction = Cesium.Cartesian3.normalize(velocity, new Cesium.Cartesian3());
+            const direction = Cesium.Cartesian3.normalize(vector, new Cesium.Cartesian3());
             const along = (origin, length) => Cesium.Cartesian3.add(
                 origin,
                 Cesium.Cartesian3.multiplyByScalar(direction, length, new Cesium.Cartesian3()),
                 new Cesium.Cartesian3()
             );
             const tail = along(center, this.#vm.particleRadius);
-            return [tail, along(tail, speed * VELOCITY_ARROW_SECONDS)];
+            return [tail, along(tail, magnitude * scale.metersPerUnit)];
         };
 
         return this.#viewer.entities.add({
-            name: VELOCITY_ARROW_NAMES[system],
+            name: name,
             polyline: {
                 positions: new Cesium.CallbackProperty(positions, false),
                 show: new Cesium.CallbackProperty((time) => {
-                    return Cesium.Cartesian3.magnitude(velocityAt(time).vector) >= VELOCITY_ARROW_MIN_SPEED;
+                    return Cesium.Cartesian3.magnitude(arrowAt(time).vector) >= scale.minMagnitude;
                 }, false),
-                width: VELOCITY_ARROW_WIDTH,
+                width: ARROW_WIDTH,
                 // NONE: segmento rettilineo nello spazio.
                 arcType: Cesium.ArcType.NONE,
-                material: new Cesium.PolylineArrowMaterialProperty(color(PALETTE[system]))
+                material: new Cesium.PolylineArrowMaterialProperty(color(cssColor))
             }
         });
     }
@@ -2734,7 +2809,7 @@ class Observable {
 //   Terra                                               -> Earth
 //   particella                                          -> Particle
 //   punto di partenza                                   -> StartPoint
-//   frecce della velocità                               -> Arrow
+//   frecce della velocità e dell'accelerazione di Coriolis -> Arrow
 //   traiettorie                                         -> Trajectory
 //   terne nel punto di partenza                         -> EnuFrame
 //   asse di rotazione                                   -> RotationAxis
@@ -2765,7 +2840,8 @@ class SimulationViewModel extends Observable {
     visibility = {
         frame: { eci: true, ecef: true },
         track: { eci: true, ecef: true },
-        velocity: { eci: true, ecef: true }
+        velocity: { eci: true, ecef: true },
+        coriolis: { ecef: true } // Solo relativa alla Terra
     };
 
     #simulation;
@@ -3009,6 +3085,7 @@ class SimulationViewModel extends Observable {
         const particlePositionEcef = particle.pointTo(earth, seconds, state.position);
         const velocities = bySystem((system) => particle.velocityArrows[system].expressedIn(earth, seconds));
         const speedKmh = (system) => Cesium.Cartesian3.magnitude(velocities[system].vector) * KMH_PER_MS;
+        const coriolis = particle.coriolisArrow.expressedIn(earth, seconds);
 
         this.#frame = {
             seconds: seconds,
@@ -3017,6 +3094,9 @@ class SimulationViewModel extends Observable {
             sphereCenterEcef: particle.pointTo(earth, seconds, state.sphereCenter),
             // Velocità assoluta (eci) e relativa (ecef): { position, vector }.
             velocities: velocities,
+            // Componente orizzontale dell'accelerazione di Coriolis:
+            // { position, vector }.
+            coriolis: coriolis,
             // Terne nel punto di partenza: { position, axes: [E, N, U] }.
             referenceFrames: bySystem((system) => particle.startFrames[system].poseIn(earth, seconds)),
             // Matrici dalle coordinate delle traiettorie (vedi
@@ -3027,7 +3107,8 @@ class SimulationViewModel extends Observable {
                 timeSeconds: seconds,
                 altitudeKm: state.altitude / 1000,
                 speedEcefKmh: speedKmh("ecef"),
-                speedEciKmh: speedKmh("eci")
+                speedEciKmh: speedKmh("eci"),
+                coriolisMs2: Cesium.Cartesian3.magnitude(coriolis.vector)
             }
         };
         this.emit("frame", this.#frame);

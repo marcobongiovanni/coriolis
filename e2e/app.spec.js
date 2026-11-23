@@ -331,15 +331,23 @@ test("le caselle di Visualizzazione nascondono e mostrano gli oggetti", async ({
             arrowEci: s.arrows.eci.show,
             arrowEcef: s.arrows.ecef.show,
             frameEci: s.frames.eci.every((p) => p.show),
-            frameEcef: s.frames.ecef.every((p) => p.show)
+            frameEcef: s.frames.ecef.every((p) => p.show),
+            coriolis: s.coriolisArrow.show
         };
     });
 
-    expect(await isShown()).toEqual({ arrowEci: true, arrowEcef: true, frameEci: true, frameEcef: true });
+    expect(await isShown()).toEqual({
+        arrowEci: true, arrowEcef: true, frameEci: true, frameEcef: true, coriolis: true
+    });
+    // L'accelerazione di Coriolis esiste solo in ECEF.
+    await expect(page.getByTitle("Coriolis ECI")).toHaveCount(0);
 
     await page.getByTitle("Velocità ECI").uncheck();
     await page.getByTitle("Terne ECEF").uncheck();
-    expect(await isShown()).toEqual({ arrowEci: false, arrowEcef: true, frameEci: true, frameEcef: false });
+    await page.getByTitle("Coriolis ECEF").uncheck();
+    expect(await isShown()).toEqual({
+        arrowEci: false, arrowEcef: true, frameEci: true, frameEcef: false, coriolis: false
+    });
 
     // Funzionano anche durante la simulazione.
     await playButton(page).click();
@@ -600,7 +608,7 @@ test("stato: la Posizione della particella si aggiorna durante la simulazione", 
 
     // Voci dello stato, nell'ordine; nessuna voce "Angolo".
     const labels = (await statusLines()).map((line) => line.split(":")[0]);
-    expect(labels).toEqual(["Posizione", "Tempo", "Quota", "Velocità ECEF", "Velocità ECI"]);
+    expect(labels).toEqual(["Posizione", "Tempo", "Quota", "Velocità ECEF", "Velocità ECI", "Coriolis ECEF"]);
 
     async function position() {
         const line = (await statusLines()).find((l) => l.startsWith("Posizione:"));

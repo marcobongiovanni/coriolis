@@ -45,11 +45,6 @@ export function createParticle(options = {}) {
     return createSimulation(options).particle;
 }
 
-// Nodo Terra della gerarchia a cui appartiene "particle".
-export function earthOf(particle) {
-    return particle.parent.children.find((node) => node instanceof Earth);
-}
-
 // Simulazione con la particella configurata, a t = 0.
 export function createSimulation(options = {}) {
     const simulation = new Simulation();

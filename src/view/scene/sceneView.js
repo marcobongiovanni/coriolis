@@ -19,12 +19,22 @@ import { PALETTE } from "../palette.js";
 import { CameraRig } from "./cameraRig.js";
 import { TrackLayer } from "./trackLayer.js";
 
-// Frecce della velocità istantanea: partono dalla superficie della
-// particella; la lunghezza è lo spazio percorso in VELOCITY_ARROW_SECONDS
-// a velocità costante (es. 1 km/s -> 600 km).
-const VELOCITY_ARROW_SECONDS = 600; // [s]
-const VELOCITY_ARROW_WIDTH = 12;    // [px] (serve per la punta)
-const VELOCITY_ARROW_MIN_SPEED = 1; // [m/s] sotto: freccia nascosta
+// Frecce: partono dalla superficie della sfera della particella e sono
+// lunghe "metersPerUnit" metri per unità della grandezza; sotto
+// "minMagnitude" sono nascoste.
+const ARROW_WIDTH = 12; // [px] (serve per la punta)
+
+// Velocità: lunghezza pari allo spazio percorso in 600 s a velocità
+// costante (es. 1 km/s -> 600 km).
+const VELOCITY_ARROW = { metersPerUnit: 600, minMagnitude: 1 }; // [m per m/s], [m/s]
+
+// Componente orizzontale dell'accelerazione di Coriolis (2ω·v·sin φ per
+// velocità relativa orizzontale alla latitudine φ): scala scelta perché
+// ai poli la freccia sia lunga circa il doppio di quella della velocità
+// relativa (2 · 600 s / 2ω ≈ 8·10⁶ s²), alla latitudine φ sin φ volte
+// tanto. La soglia corrisponde a circa 0,7 m/s di velocità relativa ai
+// poli.
+const CORIOLIS_ARROW = { metersPerUnit: 8e6, minMagnitude: 1e-4 }; // [m per m/s²], [m/s²]
 
 // Asse di rotazione: solo i due tratti esterni, dalla superficie di
 // ciascun polo verso lo spazio (nulla traspare attraverso il globo).
@@ -51,6 +61,7 @@ export class SceneView {
     #vm;
     #camera;
     #arrows;
+    #coriolisArrow;
     #tracks;
     #framePolylines;
     #startMarker;
@@ -63,7 +74,12 @@ export class SceneView {
         this.#camera = new CameraRig(viewer);
 
         this.#addParticle();
-        this.#arrows = bySystem((system) => this.#addVelocityArrow(system));
+        this.#arrows = bySystem((system) => this.#addArrow(
+            VELOCITY_ARROW_NAMES[system], PALETTE[system], (frame) => frame.velocities[system], VELOCITY_ARROW
+        ));
+        this.#coriolisArrow = this.#addArrow(
+            "Accelerazione di Coriolis orizzontale (ECEF)", PALETTE.coriolis, (frame) => frame.coriolis, CORIOLIS_ARROW
+        );
         this.#tracks = bySystem((system) => new TrackLayer(viewer.scene.primitives, color(PALETTE[system])));
         this.#addRotationAxis();
         this.#startMarker = this.#addStartMarker();
@@ -83,6 +99,7 @@ export class SceneView {
     get testObjects() {
         return {
             arrows: this.#arrows,
+            coriolisArrow: this.#coriolisArrow,
             frames: this.#framePolylines
         };
     }
@@ -130,6 +147,7 @@ export class SceneView {
                 polyline.show = vm.visibility.frame[system];
             });
         });
+        this.#coriolisArrow.show = vm.visibility.coriolis.ecef;
 
         if (!Cesium.Cartesian3.equals(this.#markerPoint, vm.startSurfacePoint)) {
             this.#markerPoint = Cesium.Cartesian3.clone(vm.startSurfacePoint);
@@ -152,7 +170,7 @@ export class SceneView {
     }
 
     // --------------------------------------------------
-    // PARTICELLA E FRECCE DELLA VELOCITÀ
+    // PARTICELLA E FRECCE
     // --------------------------------------------------
 
     #addParticle() {
@@ -169,37 +187,39 @@ export class SceneView {
         });
     }
 
-    // Freccia della velocità assoluta ("eci") o relativa ("ecef"),
-    // aggiornata da Cesium a ogni frame.
-    #addVelocityArrow(system) {
-        const velocityAt = (time) => this.#frameAt(time).velocities[system];
+    // Freccia di nome "name" e colore "cssColor", aggiornata da Cesium a
+    // ogni frame. "arrowOf(frame)" ricava dallo stato dell'istante la
+    // freccia { position, vector } (ECEF); "scale" è { metersPerUnit,
+    // minMagnitude } (vedi le costanti delle frecce).
+    #addArrow(name, cssColor, arrowOf, scale) {
+        const arrowAt = (time) => arrowOf(this.#frameAt(time));
         const positions = (time) => {
-            const { position: center, vector: velocity } = velocityAt(time);
-            const speed = Cesium.Cartesian3.magnitude(velocity);
-            if (speed < VELOCITY_ARROW_MIN_SPEED) {
+            const { position: center, vector } = arrowAt(time);
+            const magnitude = Cesium.Cartesian3.magnitude(vector);
+            if (magnitude < scale.minMagnitude) {
                 return [Cesium.Cartesian3.clone(center), Cesium.Cartesian3.clone(center)];
             }
-            const direction = Cesium.Cartesian3.normalize(velocity, new Cesium.Cartesian3());
+            const direction = Cesium.Cartesian3.normalize(vector, new Cesium.Cartesian3());
             const along = (origin, length) => Cesium.Cartesian3.add(
                 origin,
                 Cesium.Cartesian3.multiplyByScalar(direction, length, new Cesium.Cartesian3()),
                 new Cesium.Cartesian3()
             );
             const tail = along(center, this.#vm.particleRadius);
-            return [tail, along(tail, speed * VELOCITY_ARROW_SECONDS)];
+            return [tail, along(tail, magnitude * scale.metersPerUnit)];
         };
 
         return this.#viewer.entities.add({
-            name: VELOCITY_ARROW_NAMES[system],
+            name: name,
             polyline: {
                 positions: new Cesium.CallbackProperty(positions, false),
                 show: new Cesium.CallbackProperty((time) => {
-                    return Cesium.Cartesian3.magnitude(velocityAt(time).vector) >= VELOCITY_ARROW_MIN_SPEED;
+                    return Cesium.Cartesian3.magnitude(arrowAt(time).vector) >= scale.minMagnitude;
                 }, false),
-                width: VELOCITY_ARROW_WIDTH,
+                width: ARROW_WIDTH,
                 // NONE: segmento rettilineo nello spazio.
                 arcType: Cesium.ArcType.NONE,
-                material: new Cesium.PolylineArrowMaterialProperty(color(PALETTE[system]))
+                material: new Cesium.PolylineArrowMaterialProperty(color(cssColor))
             }
         });
     }

@@ -86,6 +86,28 @@ describe("gravità", function () {
         expect(Cesium.Cartesian3.distance(particle.velocityArrows.ecef.value(0), expected)).toBeLessThan(1e-9);
     });
 
+    it("la freccia di Coriolis rappresenta la componente orizzontale di -2 ω × v_rel", function () {
+        const C3 = Cesium.Cartesian3;
+        const simulation = createSimulation({ ecef: { speedKmh: 1000, azimuthDeg: 0 } });
+        simulation.advanceTo(1800);
+        const { particle, earth } = simulation;
+        const t = 1800;
+        // Velocità relativa e normale locale nel sistema della Terra.
+        const relative = particle.velocityArrows.ecef.expressedIn(earth, t).vector;
+        const normal = particle.vectorTo(earth, t, particle.state.normal);
+        const omega = new C3(0, 0, OMEGA);
+        const full = C3.multiplyByScalar(C3.cross(omega, relative, new C3()), -2, new C3());
+        const expected = C3.subtract(full, C3.multiplyByScalar(normal, C3.dot(full, normal), new C3()), new C3());
+
+        const { position, vector } = particle.coriolisArrow.expressedIn(earth, t);
+        expect(C3.distance(vector, expected)).toBeLessThan(1e-12);
+        // Orizzontale (perpendicolare alla normale), non nulla, applicata
+        // nel centro della sfera.
+        expect(C3.dot(vector, normal)).toBeCloseTo(0, 12);
+        expect(C3.magnitude(vector)).toBeGreaterThan(1e-3);
+        expect(C3.distance(position, particle.pointTo(earth, t, particle.state.sphereCenter))).toBeLessThan(1e-6);
+    });
+
     it("la Terra usa il modello scelto", function () {
         const simulation = new Simulation();
         expect(simulation.earth.model).toBe(SPHERICAL_EARTH);

@@ -17,10 +17,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
-import { build } from "./build.mjs";
+import { ROOT, build } from "./build.mjs";
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DOCS = path.join(ROOT, "docs");
 const require = createRequire(import.meta.url);
 

@@ -6,6 +6,7 @@
 export const PALETTE = {
     eci: "red",            // Traccia e velocità assolute (ECI)
     ecef: "lime",          // Traccia e velocità relative (ECEF)
+    coriolis: "yellow",    // Accelerazione di Coriolis (ECEF)
     rotationAxis: "violet",
     particle: "orange",
     startMarker: "white",

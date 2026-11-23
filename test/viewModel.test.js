@@ -143,6 +143,18 @@ describe("condizioni iniziali", function () {
         expect(vm.latitudeDeg).toBe(90);
     });
 
+    it("lo stato riporta il modulo della componente orizzontale di Coriolis: 2ω·v·sin φ", function () {
+        // Particella lanciata verso Est (velocità relativa orizzontale) su
+        // Terra sferica: la normale è radiale e φ è la latitudine
+        // geocentrica del baricentro.
+        vm.setVelocity("ecef", "azimuthDeg", 90);
+        vm.setVelocity("ecef", "speedKmh", 3600);
+        const position = simulation.particle.state.position;
+        const sinLatitude = position.z / Cesium.Cartesian3.magnitude(position);
+        expect(vm.frame.status.coriolisMs2).toBeCloseTo(2 * 7.292115e-5 * 1000 * sinLatitude, 9);
+        expect(vm.visibility.coriolis.ecef).toBe(true);
+    });
+
     it("la terna modificata determina l'altra", function () {
         vm.setVelocity("ecef", "speedKmh", 1000);
         expect(vm.velocity("ecef").speedKmh).toBe(1000);
