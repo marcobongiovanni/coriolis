@@ -235,6 +235,14 @@ corrispondente nel codice.
   trascinamento con il tasto destro del mouse.
   Nel codice: `CameraRig`.
 
+- **Zoom con la rotella**: avvicinamento (rotella in avanti) o
+  allontanamento (indietro) della **Telecamera attiva** lungo il raggio
+  che passa per il mouse, senza cambiarne l'orientamento: il punto sotto
+  il mouse resta fermo sullo schermo. A ogni scatto la distanza da quel
+  punto diventa 0,8 volte quella di prima (in avanti) o 1/0,8 volte
+  (indietro).
+  Nel codice: `CameraRig` (`#zoomTowards`).
+
 ## Simulazione
 
 - **Tempo simulato**: secondi trascorsi da t = 0 nella simulazione.

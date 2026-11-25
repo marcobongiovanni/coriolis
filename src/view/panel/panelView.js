@@ -360,7 +360,8 @@ export class PanelView {
         });
         section.append(element("div", {
             className: "sim-note",
-            textContent: "Spostamento laterale: Shift + trascinamento con il tasto destro"
+            textContent: "Rotella: zoom verso il puntatore del mouse. " +
+                "Spostamento laterale: Shift + trascinamento con tasto destro"
         }));
     }
 

@@ -359,6 +359,42 @@ test("le caselle di Visualizzazione nascondono e mostrano gli oggetti", async ({
     await expectNoErrors(page, errors);
 });
 
+test("la rotella fa zoom verso il punto sotto il mouse", async ({ page }) => {
+    const errors = await openApp(page);
+    const canvas = page.locator("#cesiumContainer canvas").first();
+    const box = await canvas.boundingBox();
+    // Punto del globo lontano dal centro della vista (coordinate nel canvas).
+    const mouse = { x: box.width / 2 + 180, y: box.height / 2 + 120 };
+
+    // Distanza della telecamera dal centro della Terra e punto del globo
+    // sotto il mouse.
+    const state = () => page.evaluate((p) => {
+        const camera = window.__coriolis.viewer.camera;
+        const picked = camera.pickEllipsoid(new Cesium.Cartesian2(p.x, p.y), Cesium.Ellipsoid.WGS84);
+        return { distance: Cesium.Cartesian3.magnitude(camera.positionWC), picked: picked };
+    }, mouse);
+
+    const before = await state();
+    await page.mouse.move(box.x + mouse.x, box.y + mouse.y);
+    for (let i = 0; i < 3; i++) {
+        await page.mouse.wheel(0, -100); // in avanti: avvicina
+        await page.waitForTimeout(100);
+    }
+    const after = await state();
+
+    expect(after.distance).toBeLessThan(before.distance - 1e6);
+    // Il punto sotto il mouse non si sposta (a meno di 1 km).
+    const C3 = (p) => [p.x, p.y, p.z];
+    const offset = Math.hypot(...C3(after.picked).map((v, i) => v - C3(before.picked)[i]));
+    expect(offset).toBeLessThan(1000);
+
+    // Indietro: la telecamera si allontana.
+    await page.mouse.wheel(0, 300);
+    await page.waitForTimeout(100);
+    expect((await state()).distance).toBeGreaterThan(after.distance);
+    await expectNoErrors(page, errors);
+});
+
 // Difetto di Cesium: lo zoom con il mouse esattamente al centro della
 // vista può chiedere una rotazione attorno a un asse nullo, che lancia
 // un'eccezione e ferma il rendering. La telecamera deve ignorarla.
