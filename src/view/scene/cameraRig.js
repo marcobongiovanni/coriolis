@@ -47,6 +47,25 @@ function configureMouseControls(controller) {
     controller.translateEventTypes = E.LEFT_DRAG;
 }
 
+// Fa ignorare a "camera" le rotazioni attorno a un asse nullo.
+//
+// Difetto di Cesium: nello zoom verso il punto sotto il mouse
+// (trascinamento destro o rotellina), se il mouse è esattamente al
+// centro della vista il punto al centro e quello sotto il mouse
+// coincidono. Per arrotondamento il loro prodotto scalare può valere
+// 0,9999999999999999 (< 1) mentre il prodotto vettoriale, usato come
+// asse, è nullo: Camera.rotate lo normalizza, lancia una DeveloperError
+// e Cesium ferma il rendering. Una rotazione attorno a un asse nullo
+// non sposta nulla, quindi ignorarla non cambia il comportamento.
+function ignoreZeroAxisRotations(camera) {
+    const rotate = camera.rotate.bind(camera);
+    camera.rotate = (axis, angle) => {
+        if (Cesium.Cartesian3.magnitudeSquared(axis) > 0) {
+            rotate(axis, angle);
+        }
+    };
+}
+
 // Imposta direttamente posizione e assi della telecamera (in ECEF).
 //
 // Non si usa camera.setView: converte direzione e Up in rotta,
@@ -79,6 +98,7 @@ export class CameraRig {
     constructor(viewer) {
         this.#viewer = viewer;
         this.#camera = viewer.camera;
+        ignoreZeroAxisRotations(viewer.camera);
         configureMouseControls(viewer.scene.screenSpaceCameraController);
         this.#installPan();
     }

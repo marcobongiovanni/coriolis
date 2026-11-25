@@ -359,6 +359,19 @@ test("le caselle di Visualizzazione nascondono e mostrano gli oggetti", async ({
     await expectNoErrors(page, errors);
 });
 
+// Difetto di Cesium: lo zoom con il mouse esattamente al centro della
+// vista può chiedere una rotazione attorno a un asse nullo, che lancia
+// un'eccezione e ferma il rendering. La telecamera deve ignorarla.
+test("una rotazione della telecamera attorno a un asse nullo non ferma il rendering", async ({ page }) => {
+    const errors = await openApp(page);
+    const frameNumber = () => page.evaluate(() => window.__coriolis.viewer.scene.frameState.frameNumber);
+    await page.evaluate(() => window.__coriolis.viewer.camera.rotate(new Cesium.Cartesian3(0, 0, 0), 0.1));
+    const before = await frameNumber();
+    await expect.poll(frameNumber).toBeGreaterThan(before + 5);
+    expect(await page.evaluate(() => window.__coriolis.viewer.useDefaultRenderLoop)).toBe(true);
+    await expectNoErrors(page, errors);
+});
+
 test("i comandi della telecamera corrispondono al pannello di aiuto", async ({ page }) => {
     const errors = await openApp(page);
     const canvas = page.locator("#cesiumContainer canvas").first();
