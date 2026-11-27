@@ -85,19 +85,12 @@ classDiagram
         coriolisArrow
         startFrames eci/ecef
         trajectories eci/ecef
-        startPoint
         setStartPoint(latitudeDeg, longitudeDeg)
         setStartAltitude(meters)
         setVelocity(frame, changes)
         reset(earthModel)
         recordTrajectory(seconds)
         updateDerivedState(earthModel)
-    }
-
-    class StartPoint {
-        latitudeDeg
-        longitudeDeg
-        setGeographic(latitudeDeg, longitudeDeg)
     }
 
     class Arrow {
@@ -133,7 +126,6 @@ classDiagram
     SceneNode <|-- Earth
     SceneNode <|-- RotationAxis
     SceneNode <|-- Particle
-    SceneNode <|-- StartPoint
     SceneNode <|-- Arrow
     SceneNode <|-- EnuFrame
     SceneNode <|-- Trajectory
@@ -149,7 +141,6 @@ classDiagram
     Earth --> "1" EarthModel : modello attivo
 
     Particle --> RotationAxis : velocità di trascinamento
-    Particle *-- "1" StartPoint
     Particle *-- "3" Arrow : velocità e Coriolis
     Particle *-- "2" EnuFrame : terne locali
     Particle *-- "2" Trajectory
@@ -180,5 +171,4 @@ flowchart TB
     earth --> arrowRel["Freccia della velocità relativa (Arrow)"]
     earth --> arrowCor["Freccia dell'accelerazione di Coriolis (Arrow)"]
     earth --> camEcef["Telecamera ECEF (Camera)"]
-    earth --> start["Punto di partenza (StartPoint)"]
 ```

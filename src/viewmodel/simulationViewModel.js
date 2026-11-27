@@ -9,7 +9,6 @@
 // modello (SceneNode, vedi Simulation):
 //   Terra                                               -> Earth
 //   particella                                          -> Particle
-//   punto di partenza                                   -> StartPoint
 //   frecce della velocità e dell'accelerazione di Coriolis -> Arrow
 //   traiettorie                                         -> Trajectory
 //   terne nel punto di partenza                         -> EnuFrame
@@ -97,22 +96,17 @@ export class SimulationViewModel extends Observable {
 
     // Latitudine del punto di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
-        return this.#particle.startPoint.latitudeDeg;
+        return this.#particle.start.latitudeDeg;
     }
 
     // Longitudine del punto di partenza [°], in [0°, 360°).
     get longitudeDeg() {
-        return this.#particle.startPoint.longitudeDeg;
+        return this.#particle.start.longitudeDeg;
     }
 
     // Quota di partenza [km].
     get altitudeKm() {
         return this.#particle.start.altitude / 1000;
-    }
-
-    // Punto di partenza sulla superficie (ECEF).
-    get startSurfacePoint() {
-        return this.#particle.startPoint.positionIn(this.#simulation.earth, 0);
     }
 
     // Posa { position, direction, up } della telecamera attiva in ECEF

@@ -25,7 +25,7 @@ corrispondente nel codice.
   di rotazione**. Contiene il **Modello di Terra** attivo. Figli:
   **Terna locale relativa**, **Traiettoria relativa**, **Freccia della
   velocità relativa**, **Freccia dell'accelerazione di Coriolis**,
-  **Telecamera ECEF**, **Punto di partenza**.
+  **Telecamera ECEF**.
   Nel codice: `Earth`, `simulation.earth`.
 
 ## Sistemi di riferimento
@@ -118,10 +118,10 @@ corrispondente nel codice.
 - **Punto di partenza**: punto della **Superficie** sotto la
   **Particella** a t = 0. È dato da latitudine e longitudine geodetiche
   WGS84. Sulla Terra sferica è la proiezione radiale sulla sfera
-  terrestre del punto WGS84 con quelle coordinate. Figlio della
-  **Terra**.
-  Nel codice: `StartPoint`, `particle.startPoint` (`latitudeDeg`,
-  `longitudeDeg`).
+  terrestre del punto WGS84 con quelle coordinate. Non è disegnato nella
+  scena: è una condizione iniziale della **Particella**.
+  Nel codice: `particle.start` (`latitudeDeg`, `longitudeDeg`,
+  `surfacePointECEF`).
 
 - **Quota di partenza**: **Quota** a t = 0. Non può essere negativa.
   Nel codice: `particle.start.altitude`.
@@ -242,6 +242,30 @@ corrispondente nel codice.
   punto diventa 0,8 volte quella di prima (in avanti) o 1/0,8 volte
   (indietro).
   Nel codice: `CameraRig` (`#zoomTowards`).
+
+- **Controllo di posizione**: insieme dei tre controlli utente che permettono
+  di definire la posizione di partenza della particella: **Controllo di latitudine**,
+  **Controllo di longitudine** e **Controllo di quota**. Il loro valore cambia anche 
+  con la scelta del punto sul globo ed, all'avvio, con la posizione geografica del PC.
+  Sono attivi solo a simulazione in pausa o ferma e ogni modifica riporta la simulazione 
+  a t = 0 (**Reset**).
+
+- **Controllo di latitudine**: campo numerico del pannello ("Latitudine
+  [°]") che modifica la latitudine del **Punto di partenza** della
+  **Particella**. I valori sono limitati all'intervallo [-90°, 90°], con
+  passo 1°.
+  Nel codice: `viewModel.setLatitude`, `particle.setStartPoint`.
+
+- **Controllo di longitudine**: campo numerico del pannello ("Longitudine
+  [°]") che modifica la longitudine del **Punto di partenza** della
+  **Particella**. I valori sono ricondotti all'intervallo [0°, 360°). 
+  Nel codice: `viewModel.setLongitude`, `particle.setStartPoint`.
+
+- **Controllo di quota**: campo numerico del pannello ("Quota di partenza
+  [km]") che modifica la **Quota di partenza** della **Particella**, in
+  km. I valori ammessi sono nell'intervallo [0, +∞): un valore negativo è
+  portato a 0. Il passo è 10 km.
+  Nel codice: `viewModel.setAltitudeKm`, `particle.setStartAltitude`.
 
 ## Simulazione
 

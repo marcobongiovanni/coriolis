@@ -14,7 +14,7 @@ export const KMH_PER_MS = 3.6; // Conversione m/s -> km/h
 
 // Asse Z comune ai sistemi ECI ed ECEF (verso il Polo Nord): l'asse
 // attorno al quale ruota la Terra. Definisce l'Est della terna locale.
-export const EARTH_ROTATION_AXIS = Cesium.Cartesian3.UNIT_Z;
+const EARTH_ROTATION_AXIS = Cesium.Cartesian3.UNIT_Z;
 
 // Sistemi di riferimento, nell'ordine in cui compaiono nell'interfaccia.
 export const REFERENCE_SYSTEMS = ["eci", "ecef"];

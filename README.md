@@ -41,7 +41,6 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 | `src/model/sceneNode.js` | Model | `SceneNode`: nodo della gerarchia della scena (padre-figlio), da cui discendono tutti gli elementi del modello che corrispondono a oggetti della scena; posa di ogni nodo (origine e assi nel sistema del padre) e trasformazioni tra i sistemi dei nodi. |
 | `src/model/earth.js` | Model | `Earth`: nodo "Terra" (sistema ECEF) con il modello di Terra attivo; modelli di Terra (sfera, ellissoide WGS84 con J2 e J4): gravità, potenziale, superficie. |
 | `src/model/rotationAxis.js` | Model | `RotationAxis`: asse di rotazione terrestre e velocità angolare (unica definizione della rotazione terrestre), velocità di trascinamento e relativa. |
-| `src/model/startPoint.js` | Model | `StartPoint`: punto di partenza sulla superficie (latitudine, longitudine, posizione). |
 | `src/model/particle.js` | Model | `Particle`: punto materiale (baricentro nel punto di contatto) disegnato come sfera; condizioni iniziali e loro regole di validità, stato iniziale e corrente, frecce della velocità, terne e traiettorie. |
 | `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta, quella relativa e la componente orizzontale dell'accelerazione di Coriolis). |
 | `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma nel sistema del padre (World o Terra); conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
@@ -74,7 +73,6 @@ che discende da `SceneNode`:
 | Particella | `Particle` (`state.position`, `radius`) |
 | Frecce della velocità assoluta e relativa | `Arrow` (`particle.velocityArrows`) |
 | Freccia dell'accelerazione di Coriolis | `Arrow` (`particle.coriolisArrow`) |
-| Punto di partenza | `StartPoint` (`particle.startPoint`) |
 | Traiettorie assoluta e relativa | `Trajectory` (`particle.trajectories`) |
 | Terne locali assoluta e relativa | `EnuFrame` (`particle.startFrames`) |
 | Asse di rotazione | `RotationAxis` (`simulation.rotationAxis`) |
@@ -90,8 +88,7 @@ World (ECI)
 │   ├── traiettoria relativa
 │   ├── freccia della velocità relativa
 │   ├── freccia dell'accelerazione di Coriolis
-│   ├── Telecamera ECEF
-│   └── punto di partenza
+│   └── Telecamera ECEF
 ├── asse di rotazione
 ├── particella
 ├── terna locale assoluta

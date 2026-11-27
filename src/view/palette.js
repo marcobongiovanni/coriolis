@@ -9,7 +9,5 @@ export const PALETTE = {
     coriolis: "yellow",    // Accelerazione di Coriolis (ECEF)
     rotationAxis: "violet",
     particle: "orange",
-    startMarker: "white",
-    startMarkerOutline: "black",
     frameAxes: ["red", "lime", "blue"] // Est, Nord, Su
 };

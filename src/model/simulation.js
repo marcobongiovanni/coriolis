@@ -12,8 +12,7 @@
 //     -> Terra (coordinate ECEF, contiene il modello di Terra attivo)
 //          -> terna locale relativa, traiettoria relativa,
 //             freccia della velocità relativa,
-//             freccia dell'accelerazione di Coriolis, Telecamera ECEF,
-//             punto di partenza
+//             freccia dell'accelerazione di Coriolis, Telecamera ECEF
 //     -> asse di rotazione
 //     -> particella
 //     -> terna locale assoluta, traiettoria assoluta,
@@ -39,7 +38,7 @@ import { Particle } from "./particle.js";
 import { RotationAxis } from "./rotationAxis.js";
 import { SceneNode } from "./sceneNode.js";
 
-export const MAX_PHYSICS_STEP = 0.5;  // Passo massimo di integrazione [s]
+const MAX_PHYSICS_STEP = 0.5;  // Passo massimo di integrazione [s]
 const MAX_SUBSTEPS = 20000;           // Limite di sicurezza per chiamata
 const MAX_CONTACTS_PER_STEP = 5;      // Urti risolti in un singolo passo
 const CONTACT_BISECTIONS = 40;        // Iterazioni per l'istante di contatto
@@ -92,7 +91,6 @@ export class Simulation {
         earth.addChild(particle.velocityArrows.ecef); // Freccia della velocità relativa
         earth.addChild(particle.coriolisArrow);       // Freccia dell'accelerazione di Coriolis
         earth.addChild(cameras.ecef);
-        earth.addChild(particle.startPoint);
     }
 
     // Riporta la simulazione a t = 0, applicando le condizioni iniziali

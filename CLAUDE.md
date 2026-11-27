@@ -1,8 +1,8 @@
 # CLAUDE.md
 
 ## General rules
-- Avoid code duplication and refactor code whenever possible.
-- Code that is clear and readable by humans.
+- Avoid code duplication and refactor code after each modification requested.
+- Code must be clear and human readable.
 - Always comment functions and important parts of the code.
 - Maintain the existing operation, except for those parts for which a modification is required.
 

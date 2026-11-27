@@ -187,7 +187,7 @@ test.describe("con la posizione geografica consentita", () => {
     test("la particella parte dalla posizione del PC", async ({ page }) => {
         const errors = await openApp(page);
         await expect.poll(() => page.evaluate(() => {
-            const s = window.__coriolis.particle.startPoint;
+            const s = window.__coriolis.particle.start;
             return [s.latitudeDeg, s.longitudeDeg];
         })).toEqual([41.9, 12.5]);
         await expect(page.getByLabel("Latitudine [°]")).toHaveValue("41.9");
@@ -279,7 +279,7 @@ test("la longitudine è ciclica tra 0° e 359°", async ({ page }) => {
     await longitude.press("ArrowUp");
     await expect(longitude).toHaveValue("1");
 
-    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.startPoint.longitudeDeg);
+    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.start.longitudeDeg);
     expect(longitudeDeg).toBe(1);
 });
 
@@ -668,7 +668,7 @@ test("stato: la Posizione della particella si aggiorna durante la simulazione", 
     // A t = 0 la particella è sul punto di partenza.
     const start = await position();
     const startPoint = await page.evaluate(() => {
-        const s = window.__coriolis.particle.startPoint;
+        const s = window.__coriolis.particle.start;
         return { latitudeDeg: s.latitudeDeg, longitudeDeg: s.longitudeDeg };
     });
     expect(start.lat).toBeCloseTo(startPoint.latitudeDeg, 1);

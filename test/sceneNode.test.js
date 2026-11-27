@@ -110,7 +110,7 @@ describe("gerarchia della simulazione", function () {
         expect(new Set(earth.children)).toEqual(new Set([
             particle.startFrames.ecef, particle.trajectories.ecef, particle.velocityArrows.ecef,
             particle.coriolisArrow,
-            cameras.ecef, particle.startPoint
+            cameras.ecef
         ]));
     });
 });

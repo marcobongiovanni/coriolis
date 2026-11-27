@@ -20,8 +20,8 @@ describe("condizioni iniziali", function () {
     it("predefinite: punto di riserva, quota 0, velocità relativa nulla", function () {
         const particle = new Particle(new RotationAxis());
         expect(particle.radius).toBe(DEFAULT_PARTICLE_RADIUS);
-        expect(particle.startPoint.latitudeDeg).toBe(45);
-        expect(particle.startPoint.longitudeDeg).toBe(7.1);
+        expect(particle.start.latitudeDeg).toBe(45);
+        expect(particle.start.longitudeDeg).toBe(7.1);
         expect(particle.start.altitude).toBe(0);
         expect(particle.velocityMaster).toBe("ecef");
         expect(particle.velocity.ecef.speedKmh).toBe(0);
@@ -30,18 +30,18 @@ describe("condizioni iniziali", function () {
     it("la latitudine è limitata a ±90° e la longitudine avvolta in [0°, 360°)", function () {
         const particle = new Particle(new RotationAxis());
         particle.setStartPoint(120, -10);
-        expect(particle.startPoint.latitudeDeg).toBe(90);
-        expect(particle.startPoint.longitudeDeg).toBe(350);
+        expect(particle.start.latitudeDeg).toBe(90);
+        expect(particle.start.longitudeDeg).toBe(350);
         particle.setStartPoint(-95, 370);
-        expect(particle.startPoint.latitudeDeg).toBe(-90);
-        expect(particle.startPoint.longitudeDeg).toBeCloseTo(10, 12);
+        expect(particle.start.latitudeDeg).toBe(-90);
+        expect(particle.start.longitudeDeg).toBeCloseTo(10, 12);
     });
 
     it("il punto sulla superficie segue latitudine e longitudine", function () {
         const particle = new Particle(new RotationAxis());
         particle.setStartPoint(30, 100);
         const expected = Cesium.Cartesian3.fromDegrees(100, 30, 0);
-        expect(Cesium.Cartesian3.distance(particle.startPoint.position, expected)).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(particle.start.surfacePointECEF, expected)).toBeLessThan(1e-6);
     });
 
     it("la quota non è negativa", function () {

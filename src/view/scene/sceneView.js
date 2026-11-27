@@ -64,8 +64,6 @@ export class SceneView {
     #coriolisArrow;
     #tracks;
     #framePolylines;
-    #startMarker;
-    #markerPoint;
     #scratchPixelSphere = new Cesium.BoundingSphere();
 
     constructor(viewer, viewModel) {
@@ -82,7 +80,6 @@ export class SceneView {
         );
         this.#tracks = bySystem((system) => new TrackLayer(viewer.scene.primitives, color(PALETTE[system])));
         this.#addRotationAxis();
-        this.#startMarker = this.#addStartMarker();
         this.#framePolylines = this.#addReferenceFrames();
         this.#installPicking();
 
@@ -148,11 +145,6 @@ export class SceneView {
             });
         });
         this.#coriolisArrow.show = vm.visibility.coriolis.ecef;
-
-        if (!Cesium.Cartesian3.equals(this.#markerPoint, vm.startSurfacePoint)) {
-            this.#markerPoint = Cesium.Cartesian3.clone(vm.startSurfacePoint);
-            this.#startMarker.position = this.#markerPoint;
-        }
 
         this.#viewer.canvas.style.cursor = vm.pickMode ? "crosshair" : "";
         // Subito, senza attendere il frame: la telecamera attiva può
@@ -242,7 +234,7 @@ export class SceneView {
     }
 
     // --------------------------------------------------
-    // ASSE DI ROTAZIONE E MARCATORE DEL PUNTO DI PARTENZA
+    // ASSE DI ROTAZIONE
     // --------------------------------------------------
 
     // Due tratti lungo l'asse fornito dal ViewModel, dalla superficie
@@ -261,20 +253,6 @@ export class SceneView {
                     material: color(PALETTE.rotationAxis)
                 }
             });
-        });
-    }
-
-    // Posizione impostata da #render().
-    #addStartMarker() {
-        return this.#viewer.entities.add({
-            name: "Punto di partenza",
-            point: {
-                pixelSize: 7,
-                color: color(PALETTE.startMarker),
-                outlineColor: color(PALETTE.startMarkerOutline),
-                outlineWidth: 1,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND
-            }
         });
     }
 
