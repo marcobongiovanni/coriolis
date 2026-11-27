@@ -39,7 +39,7 @@ const viewModel = new SimulationViewModel(
 new PanelView(viewer.container, viewModel);
 const sceneView = new SceneView(viewer, viewModel);
 
-viewModel.locateStartPoint();
+viewModel.locateStartPosition();
 
 // Oggetto in sola lettura usato dai test end-to-end (Playwright) per
 // verificare lo stato della scena. Non ha effetti sulla simulazione.

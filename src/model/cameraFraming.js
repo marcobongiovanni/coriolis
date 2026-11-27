@@ -6,7 +6,7 @@
 // del semiangolo del campo visivo lungo la larghezza.
 //
 // La telecamera guarda il centro della sfera della particella da una
-// direzione fissa nella terna locale Est-Nord-Su del punto di partenza
+// direzione fissa nella terna locale Est-Nord-Su della posizione di partenza
 // (EnuFrame della particella):
 //   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
 //   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
@@ -88,7 +88,7 @@ function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
 // locale "frame" (EnuFrame con origine nel centro della sfera della
 // particella e asse Su lungo la normale locale), nel sistema del padre
 // della terna (World o Terra, con origine nel centro della Terra).
-export function startPointFraming(frame, tanHalfFovWidth) {
+export function startPositionFraming(frame, tanHalfFovWidth) {
     const C3 = Cesium.Cartesian3;
     const target = frame.position;
     const normal = frame.axes[2];

@@ -11,7 +11,7 @@
 //   particella                                          -> Particle
 //   frecce della velocità e dell'accelerazione di Coriolis -> Arrow
 //   traiettorie                                         -> Trajectory
-//   terne nel punto di partenza                         -> EnuFrame
+//   terne nella posizione di partenza                   -> EnuFrame
 //   asse di rotazione                                   -> RotationAxis
 //   telecamere ECI ed ECEF                              -> Camera
 // Cesium disegna nel sistema ECEF: il ViewModel esprime ogni elemento
@@ -21,7 +21,8 @@
 //   "change"            lo stato mostrato dalle viste è cambiato
 //   "frame" (frame)     calcolato lo stato di un nuovo istante
 //   "error" (message)   messaggio per l'utente (undefined = nascondi)
-//   "startPointLocated" punto di partenza preso dalla posizione del PC
+//   "startPositionLocated" latitudine e longitudine di partenza prese
+//                         dalla posizione del PC
 // ============================================================
 
 import * as Cesium from "cesium";
@@ -94,19 +95,19 @@ export class SimulationViewModel extends Observable {
         return this.#particle.radius;
     }
 
-    // Latitudine del punto di partenza [°], in [-90°, +90°].
+    // Latitudine della posizione di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
-        return this.#particle.start.latitudeDeg;
+        return this.#particle.startPosition.latitudeDeg;
     }
 
-    // Longitudine del punto di partenza [°], in [0°, 360°).
+    // Longitudine della posizione di partenza [°], in [0°, 360°).
     get longitudeDeg() {
-        return this.#particle.start.longitudeDeg;
+        return this.#particle.startPosition.longitudeDeg;
     }
 
-    // Quota di partenza [km].
+    // Quota della posizione di partenza [km].
     get altitudeKm() {
-        return this.#particle.start.altitude / 1000;
+        return this.#particle.startPosition.altitude / 1000;
     }
 
     // Posa { position, direction, up } della telecamera attiva in ECEF
@@ -178,12 +179,12 @@ export class SimulationViewModel extends Observable {
     }
 
     // Punto scelto sul globo. Restituisce true se è stato accettato.
-    pickStartPoint(latitudeDeg, longitudeDeg) {
+    pickStartPosition(latitudeDeg, longitudeDeg) {
         if (!this.pickMode || this.running || !this.#clock.isAtStart()) {
             return false;
         }
         this.pickMode = false;
-        this.#editSetup(() => this.#particle.setStartPoint(latitudeDeg, longitudeDeg));
+        this.#editSetup(() => this.#particle.setStartPosition({ latitudeDeg, longitudeDeg }));
         return true;
     }
 
@@ -192,17 +193,17 @@ export class SimulationViewModel extends Observable {
 
     // Latitudine di partenza [°].
     setLatitude(deg) {
-        this.#editSetup(() => this.#particle.setStartPoint(deg, this.longitudeDeg));
+        this.#editSetup(() => this.#particle.setStartPosition({ latitudeDeg: deg }));
     }
 
     // Longitudine di partenza [°].
     setLongitude(deg) {
-        this.#editSetup(() => this.#particle.setStartPoint(this.latitudeDeg, deg));
+        this.#editSetup(() => this.#particle.setStartPosition({ longitudeDeg: deg }));
     }
 
-    // Quota di partenza [km].
+    // Quota della posizione di partenza [km].
     setAltitudeKm(km) {
-        this.#editSetup(() => this.#particle.setStartAltitude(km * 1000));
+        this.#editSetup(() => this.#particle.setStartPosition({ altitude: km * 1000 }));
     }
 
     // Una componente della terna di velocità iniziale "frame";
@@ -233,14 +234,14 @@ export class SimulationViewModel extends Observable {
         camera.movedByUser = true;
     }
 
-    // Inquadra il punto di partenza con le telecamere che l'utente non
+    // Inquadra la posizione di partenza con le telecamere che l'utente non
     // ha ancora spostato. "tanHalfFovWidth": tangente del semiangolo
     // del campo visivo lungo la larghezza della vista.
-    frameStartPoint(tanHalfFovWidth) {
-        const startFrame = this.#particle.startFrames.ecef; // Terna locale nel punto di partenza
+    frameStartPosition(tanHalfFovWidth) {
+        const startFrame = this.#particle.startFrames.ecef; // Terna locale relativa
         Object.values(this.#simulation.cameras)
             .filter((camera) => !camera.movedByUser)
-            .forEach((camera) => camera.frameStartPoint(startFrame, tanHalfFovWidth));
+            .forEach((camera) => camera.frameStartPosition(startFrame, tanHalfFovWidth));
     }
 
     // item: "frame", "track" o "velocity"; frame: "eci" o "ecef".
@@ -250,9 +251,10 @@ export class SimulationViewModel extends Observable {
         this.emit("change");
     }
 
-    // Usa la posizione del PC come punto di partenza, se nel frattempo
+    // Usa la posizione del PC come latitudine e longitudine di partenza,
+    // se nel frattempo
     // l'utente non ha già scelto un punto o avviato la simulazione.
-    async locateStartPoint() {
+    async locateStartPosition() {
         const fallbackLatitude = this.latitudeDeg;
         const fallbackLongitude = this.longitudeDeg;
         const position = await this.#geolocation.getCurrentPosition();
@@ -265,8 +267,11 @@ export class SimulationViewModel extends Observable {
         if (!position || !untouched) {
             return;
         }
-        this.#editSetup(() => this.#particle.setStartPoint(position.latitudeDeg, position.longitudeDeg));
-        this.emit("startPointLocated");
+        this.#editSetup(() => this.#particle.setStartPosition({
+            latitudeDeg: position.latitudeDeg,
+            longitudeDeg: position.longitudeDeg
+        }));
+        this.emit("startPositionLocated");
     }
 
     // --------------------------------------------------
@@ -301,7 +306,7 @@ export class SimulationViewModel extends Observable {
             // Componente orizzontale dell'accelerazione di Coriolis:
             // { position, vector }.
             coriolis: coriolis,
-            // Terne nel punto di partenza: { position, axes: [E, N, U] }.
+            // Terne nella posizione di partenza: { position, axes: [E, N, U] }.
             referenceFrames: bySystem((system) => particle.startFrames[system].poseIn(earth, seconds)),
             // Matrici dalle coordinate delle traiettorie (vedi
             // trajectory()) a ECEF.

@@ -16,7 +16,7 @@
 // ============================================================
 
 import * as Cesium from "cesium";
-import { startPointFraming } from "./cameraFraming.js";
+import { startPositionFraming } from "./cameraFraming.js";
 import { SceneNode } from "./sceneNode.js";
 
 export class Camera extends SceneNode {
@@ -55,7 +55,7 @@ export class Camera extends SceneNode {
     // Inquadratura iniziale (vedi cameraFraming.js): l'origine della
     // terna locale "frame" (centro della sfera della particella) vista
     // da una direzione fissa nella terna, a t = 0.
-    frameStartPoint(frame, tanHalfFovWidth) {
-        this.setFrom(frame.parent, startPointFraming(frame, tanHalfFovWidth), 0);
+    frameStartPosition(frame, tanHalfFovWidth) {
+        this.setFrom(frame.parent, startPositionFraming(frame, tanHalfFovWidth), 0);
     }
 }

@@ -115,16 +115,14 @@ corrispondente nel codice.
   **Superficie**, lungo la **Normale locale**.
   Nel codice: `particle.state.altitude`.
 
-- **Punto di partenza**: punto della **Superficie** sotto la
-  **Particella** a t = 0. È dato da latitudine e longitudine geodetiche
-  WGS84. Sulla Terra sferica è la proiezione radiale sulla sfera
-  terrestre del punto WGS84 con quelle coordinate. Non è disegnato nella
-  scena: è una condizione iniziale della **Particella**.
-  Nel codice: `particle.start` (`latitudeDeg`, `longitudeDeg`,
-  `surfacePointECEF`).
-
-- **Quota di partenza**: **Quota** a t = 0. Non può essere negativa.
-  Nel codice: `particle.start.altitude`.
+- **Posizione di partenza**: posizione della **Particella** a t = 0, data
+  da latitudine e longitudine geodetiche WGS84 e dalla quota, misurata
+  lungo la **Normale locale** del **Modello di Terra** attivo. La quota
+  non può essere negativa. Sulla Terra sferica il punto WGS84 con quella
+  latitudine e longitudine viene proiettato radialmente sulla sfera e la
+  quota si misura lungo il raggio. Non è disegnata nella scena.
+  Nel codice: `particle.startPosition` (`latitudeDeg`, `longitudeDeg`,
+  `altitude`), `particle.setStartPosition`.
 
 ## Dinamica
 
@@ -225,11 +223,11 @@ corrispondente nel codice.
 
 - **Inquadratura iniziale**: **Posa** che guarda il **Centro della
   sfera** a t = 0, da **Azimuth** = 150° ed **Elevazione** = 45° nella
-  **Terna locale** del **Punto di partenza**, senza rollio. La distanza
+  **Terna locale relativa**, senza rollio. La distanza
   è quella per cui il globo occupa il 95% della larghezza della vista.
   Si applica solo alle telecamere non ancora spostate dall'utente, anche
   quando arriva la posizione geografica del PC.
-  Nel codice: `startPointFraming`, `Camera.frameStartPoint`.
+  Nel codice: `startPositionFraming`, `Camera.frameStartPosition`.
 
 - **Pan**: spostamento laterale della **Telecamera attiva**, con Shift e
   trascinamento con il tasto destro del mouse.
@@ -243,29 +241,34 @@ corrispondente nel codice.
   (indietro).
   Nel codice: `CameraRig` (`#zoomTowards`).
 
-- **Controllo di posizione**: insieme dei tre controlli utente che permettono
-  di definire la posizione di partenza della particella: **Controllo di latitudine**,
-  **Controllo di longitudine** e **Controllo di quota**. Il loro valore cambia anche 
-  con la scelta del punto sul globo ed, all'avvio, con la posizione geografica del PC.
-  Sono attivi solo a simulazione in pausa o ferma e ogni modifica riporta la simulazione 
-  a t = 0 (**Reset**).
+- **Controllo di posizione**: insieme dei tre campi numerici della
+  sezione "Partenza" del pannello che definiscono la **Posizione di
+  partenza** della **Particella**: **Controllo di latitudine**,
+  **Controllo di longitudine** e **Controllo di quota**.
+  Sono attivi solo a simulazione in pausa o ferma e ogni modifica riporta
+  la simulazione a t = 0 (**Reset**). Latitudine e longitudine cambiano
+  anche con la scelta del punto sul globo e, all'avvio, con la posizione
+  geografica del PC.
+  Nel codice: `PanelView.#buildStartSection`, `viewModel.editable`.
 
 - **Controllo di latitudine**: campo numerico del pannello ("Latitudine
-  [°]") che modifica la latitudine del **Punto di partenza** della
+  [°]") che modifica la latitudine della **Posizione di partenza** della
   **Particella**. I valori sono limitati all'intervallo [-90°, 90°], con
   passo 1°.
-  Nel codice: `viewModel.setLatitude`, `particle.setStartPoint`.
+  Nel codice: `viewModel.setLatitude`, `particle.setStartPosition`.
 
 - **Controllo di longitudine**: campo numerico del pannello ("Longitudine
-  [°]") che modifica la longitudine del **Punto di partenza** della
-  **Particella**. I valori sono ricondotti all'intervallo [0°, 360°). 
-  Nel codice: `viewModel.setLongitude`, `particle.setStartPoint`.
+  [°]") che modifica la longitudine della **Posizione di partenza** della
+  **Particella**. I valori sono ricondotti all'intervallo circolare
+  [0°, 360°): superato uno dei due estremi, si riparte dall'altro. Il
+  passo è 1°.
+  Nel codice: `viewModel.setLongitude`, `particle.setStartPosition`.
 
-- **Controllo di quota**: campo numerico del pannello ("Quota di partenza
-  [km]") che modifica la **Quota di partenza** della **Particella**, in
-  km. I valori ammessi sono nell'intervallo [0, +∞): un valore negativo è
+- **Controllo di quota**: campo numerico del pannello ("Quota [km]")
+  che modifica la quota della **Posizione di partenza** della
+  **Particella**, in km. I valori ammessi sono nell'intervallo [0, +∞): un valore negativo è
   portato a 0. Il passo è 10 km.
-  Nel codice: `viewModel.setAltitudeKm`, `particle.setStartAltitude`.
+  Nel codice: `viewModel.setAltitudeKm`, `particle.setStartPosition`.
 
 ## Simulazione
 
@@ -273,11 +276,12 @@ corrispondente nel codice.
   Scorre 600 volte più veloce del tempo reale.
   Nel codice: `simulation.time`, `TIME_SCALE`.
 
-- **Condizioni iniziali**: **Modello di Terra**, **Punto di partenza**,
-  **Quota di partenza** e **Velocità iniziale**. Si possono modificare
-  solo a simulazione in pausa o ferma. Ogni modifica ha effetto subito:
-  la simulazione torna a t = 0 (**Reset**). Fa eccezione la scelta del
-  **Punto di partenza** sul globo, che richiede prima un **Reset**.
+- **Condizioni iniziali**: **Modello di Terra**, **Posizione di
+  partenza** e **Velocità iniziale**. Si possono modificare solo a
+  simulazione in pausa o ferma. Ogni modifica ha effetto subito: la
+  simulazione torna a t = 0 (**Reset**). Fa eccezione la scelta di
+  latitudine e longitudine della **Posizione di partenza** sul globo,
+  che richiede prima un **Reset**.
   Nel codice: `viewModel.editable`.
 
 - **Reset**: ritorno a t = 0 con le **Condizioni iniziali** correnti

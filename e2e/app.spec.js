@@ -134,14 +134,14 @@ async function expectEarthExtentFraction(page, side, fraction) {
 // azimuth 150° (sud-sud-est) ed elevazione 45° nella terna locale del punto
 // di partenza, con Up complanare a normale e direzione di vista (e
 // rivolto verso l'alto), alla distanza in cui la Terra occupa il 95% della larghezza.
-async function expectEarthFramedOnStartPoint(page) {
+async function expectEarthFramedOnStartPosition(page) {
     const framing = await page.evaluate(() => {
         const { viewer, particle } = window.__coriolis;
         const camera = viewer.camera;
         const C3 = Cesium.Cartesian3;
 
         // Terna Est-Nord-Su con Su lungo la normale locale del modello
-        // di Terra nel punto di partenza.
+        // di Terra nella posizione di partenza.
         const normal = particle.initial.normal;
         const east = C3.normalize(C3.cross(C3.UNIT_Z, normal, new C3()), new C3());
         const north = C3.cross(normal, east, new C3());
@@ -173,8 +173,8 @@ async function expectEarthFramedOnStartPoint(page) {
 test("all'avvio la particella è a quota 0 e la Terra occupa il 95% della larghezza", async ({ page }) => {
     const errors = await openApp(page);
     expect(await statusValue(page, "Quota")).toBe(0);
-    await expect(page.getByLabel("Quota di partenza [km]")).toHaveValue("0");
-    await expectEarthFramedOnStartPoint(page);
+    await expect(page.getByLabel("Quota [km]")).toHaveValue("0");
+    await expectEarthFramedOnStartPosition(page);
     await expectNoErrors(page, errors);
 });
 
@@ -187,15 +187,15 @@ test.describe("con la posizione geografica consentita", () => {
     test("la particella parte dalla posizione del PC", async ({ page }) => {
         const errors = await openApp(page);
         await expect.poll(() => page.evaluate(() => {
-            const s = window.__coriolis.particle.start;
+            const s = window.__coriolis.particle.startPosition;
             return [s.latitudeDeg, s.longitudeDeg];
         })).toEqual([41.9, 12.5]);
         await expect(page.getByLabel("Latitudine [°]")).toHaveValue("41.9");
         await expect(page.getByLabel("Longitudine [°]")).toHaveValue("12.5");
         expect(await statusValue(page, "Quota")).toBe(0);
 
-        // L'inquadratura è ricalcolata sul nuovo punto di partenza.
-        await expectEarthFramedOnStartPoint(page);
+        // L'inquadratura è ricalcolata sulla nuova posizione di partenza.
+        await expectEarthFramedOnStartPosition(page);
         await expectNoErrors(page, errors);
     });
 });
@@ -238,7 +238,7 @@ test("stop dopo una simulazione riporta a t = 0 senza eccezioni", async ({ page 
 test("la particella cade e accelera", async ({ page }) => {
     const errors = await openApp(page);
     // All'avvio la particella è a quota 0: la si solleva prima.
-    const altitude = page.getByLabel("Quota di partenza [km]");
+    const altitude = page.getByLabel("Quota [km]");
     await altitude.fill("225");
     await altitude.press("Enter");
     await expect.poll(() => statusValue(page, "Quota")).toBe(225);
@@ -279,7 +279,7 @@ test("la longitudine è ciclica tra 0° e 359°", async ({ page }) => {
     await longitude.press("ArrowUp");
     await expect(longitude).toHaveValue("1");
 
-    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.start.longitudeDeg);
+    const longitudeDeg = await page.evaluate(() => window.__coriolis.particle.startPosition.longitudeDeg);
     expect(longitudeDeg).toBe(1);
 });
 
@@ -510,7 +510,7 @@ test("telecamere ECI ed ECEF indipendenti", async ({ page }) => {
     // Predefinita: telecamera ECI, con l'inquadratura iniziale.
     await expect(eciRadio).toBeChecked();
     await expect(ecefRadio).not.toBeChecked();
-    await expectEarthFramedOnStartPoint(page);
+    await expectEarthFramedOnStartPosition(page);
 
     // La telecamera ECI è ferma nello spazio: vista dalla Terra ruota di
     // -ω·Δt attorno all'asse Z.
@@ -552,7 +552,7 @@ test("pan con Shift + trascinamento destro: trasla senza ruotare", async ({ page
     const errors = await openApp(page);
     const canvas = page.locator("#cesiumContainer canvas").first();
     const box = await canvas.boundingBox();
-    // Punto di partenza sul globo, un po' sotto il centro della vista.
+    // Punto da scegliere sul globo, un po' sotto il centro della vista.
     const start = { x: box.width / 2, y: box.height / 2 + 100 };
     const delta = { x: 120, y: -80 };
 
@@ -665,17 +665,17 @@ test("stato: la Posizione della particella si aggiorna durante la simulazione", 
         return { lat, lon };
     }
 
-    // A t = 0 la particella è sul punto di partenza.
+    // A t = 0 la particella è nella posizione di partenza.
     const start = await position();
-    const startPoint = await page.evaluate(() => {
-        const s = window.__coriolis.particle.start;
+    const startPosition = await page.evaluate(() => {
+        const s = window.__coriolis.particle.startPosition;
         return { latitudeDeg: s.latitudeDeg, longitudeDeg: s.longitudeDeg };
     });
-    expect(start.lat).toBeCloseTo(startPoint.latitudeDeg, 1);
-    expect(start.lon).toBeCloseTo(startPoint.longitudeDeg, 1);
+    expect(start.lat).toBeCloseTo(startPosition.latitudeDeg, 1);
+    expect(start.lon).toBeCloseTo(startPosition.longitudeDeg, 1);
 
     // Lanciata verso Est, la particella cambia posizione.
-    const altitude = page.getByLabel("Quota di partenza [km]");
+    const altitude = page.getByLabel("Quota [km]");
     await altitude.fill("1000");
     await altitude.press("Enter");
     const speed = page.getByLabel("Modulo [km/h] relativa (ECEF)");

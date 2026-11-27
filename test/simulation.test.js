@@ -155,7 +155,7 @@ describe("simulazione", function () {
     it("le condizioni iniziali hanno effetto al reset, che riporta a t = 0", function () {
         const simulation = createSimulation();
         simulation.advanceTo(1000);
-        simulation.particle.setStartAltitude(300000);
+        simulation.particle.setStartPosition({ altitude: 300000 });
         simulation.reset();
         expect(simulation.time).toBe(0);
         expect(simulation.particle.state.altitude).toBeCloseTo(300000, 3);

@@ -63,7 +63,7 @@ describe("inquadratura iniziale", function () {
         const target = C3.fromDegrees(7.1, 45, 125000);
         const frame = earth.addChild(new EnuFrame());
         frame.placeAt(target, Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(surface));
-        camera.frameStartPoint(frame, Math.tan(Cesium.Math.toRadians(30)));
+        camera.frameStartPosition(frame, Math.tan(Cesium.Math.toRadians(30)));
         const pose = camera.expressedIn(earth, 0);
         const toTarget = C3.normalize(C3.subtract(target, pose.position, new C3()), new C3());
         expect(C3.dot(toTarget, pose.direction)).toBeCloseTo(1, 12);

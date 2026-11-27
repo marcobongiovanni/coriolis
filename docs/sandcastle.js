@@ -123,7 +123,7 @@ function directionEnu(azimuthDeg, elevationDeg) {
 // del semiangolo del campo visivo lungo la larghezza.
 //
 // La telecamera guarda il centro della sfera della particella da una
-// direzione fissa nella terna locale Est-Nord-Su del punto di partenza
+// direzione fissa nella terna locale Est-Nord-Su della posizione di partenza
 // (EnuFrame della particella):
 //   - azimuth CAMERA_AZIMUTH_DEG, in senso orario dal Nord;
 //   - elevazione CAMERA_ELEVATION_DEG sopra l'orizzonte locale.
@@ -203,7 +203,7 @@ function positionForEarthWidth(target, offset, direction, up, tanHalfFovWidth) {
 // locale "frame" (EnuFrame con origine nel centro della sfera della
 // particella e asse Su lungo la normale locale), nel sistema del padre
 // della terna (World o Terra, con origine nel centro della Terra).
-function startPointFraming(frame, tanHalfFovWidth) {
+function startPositionFraming(frame, tanHalfFovWidth) {
     const C3 = Cesium.Cartesian3;
     const target = frame.position;
     const normal = frame.axes[2];
@@ -447,8 +447,8 @@ class Camera extends SceneNode {
     // Inquadratura iniziale (vedi cameraFraming.js): l'origine della
     // terna locale "frame" (centro della sfera della particella) vista
     // da una direzione fissa nella terna, a t = 0.
-    frameStartPoint(frame, tanHalfFovWidth) {
-        this.setFrom(frame.parent, startPointFraming(frame, tanHalfFovWidth), 0);
+    frameStartPosition(frame, tanHalfFovWidth) {
+        this.setFrom(frame.parent, startPositionFraming(frame, tanHalfFovWidth), 0);
     }
 }
 
@@ -827,14 +827,14 @@ class Trajectory extends SceneNode {
 //
 // Contiene ciò che appartiene alla singola particella:
 //   - raggio della sfera disegnata;
-//   - condizioni iniziali (punto e quota di partenza, velocità) con le
-//     loro regole di validità;
+//   - condizioni iniziali (posizione di partenza, velocità) con le loro
+//     regole di validità;
 //   - stato iniziale e stato corrente, in ECI;
 //   - grandezze derivate (quota, centro della sfera, energia);
 //   - frecce della velocità assoluta e relativa;
 //   - freccia della componente orizzontale dell'accelerazione di
 //     Coriolis;
-//   - terne locali assoluta e relativa nel punto di partenza;
+//   - terne locali assoluta e relativa nella posizione di partenza;
 //   - traiettorie assoluta e relativa del centro della sfera.
 // Frecce, terne e traiettorie sono nodi della scena che Simulation
 // appende a World (assoluti, chiave "eci") o alla Terra (relativi,
@@ -852,27 +852,29 @@ class Trajectory extends SceneNode {
 
 const DEFAULT_PARTICLE_RADIUS = 125000; // [m] raggio della sfera disegnata
 
-// Punto di partenza predefinito, usato finché il browser non fornisce
-// la posizione geografica del PC.
-const DEFAULT_START_POINT = { latitudeDeg: 45.0, longitudeDeg: 7.1 };
+// Posizione di partenza predefinita; latitudine e longitudine sono
+// usate finché il browser non fornisce la posizione geografica del PC.
+const DEFAULT_START_POSITION = { latitudeDeg: 45.0, longitudeDeg: 7.1, altitude: 0 };
 
 class Particle extends SceneNode {
     // Raggio della sfera con cui la particella è disegnata [m]: non
     // entra nella dinamica.
     radius;
 
-    // Condizioni iniziali. Il punto di partenza (latitudine, longitudine
-    // e punto sulla superficie) è impostato dal costruttore con
-    // setStartPoint().
-    start = {
-        latitudeDeg: 0,                            // [-90°, +90°]
-        longitudeDeg: 0,                           // [0°, 360°)
-        surfacePointECEF: new Cesium.Cartesian3(), // Punto di partenza sulla superficie WGS84
-        altitude: 0 // Quota del baricentro (punto di contatto) [m]
+    // Posizione di partenza del baricentro (condizione iniziale):
+    // latitudine e longitudine geodetiche WGS84 e quota lungo la normale
+    // locale del modello di Terra. Impostata dal costruttore con
+    // setStartPosition().
+    startPosition = {
+        latitudeDeg: 0,                           // [-90°, +90°]
+        longitudeDeg: 0,                          // [0°, 360°)
+        altitude: 0,                              // [m], non negativa
+        surfacePointECEF: new Cesium.Cartesian3() // Derivato: punto WGS84 di quota 0
     };
 
-    // Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
-    // partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
+    // Terne di velocità iniziale (nella terna Est-Nord-Su della
+    // posizione di partenza: modulo [km/h], azimuth [°] dal Nord,
+    // elevazione [°]):
     //   "eci":  velocità assoluta, rispetto allo spazio inerziale;
     //   "ecef": velocità relativa, rispetto alla Terra.
     // L'ultima terna modificata è quella "di riferimento"
@@ -887,7 +889,7 @@ class Particle extends SceneNode {
         position: new Cesium.Cartesian3(),
         velocity: bySystem(() => new Cesium.Cartesian3()), // Assoluta (eci) e relativa (ecef), in ECI
         sphereCenter: new Cesium.Cartesian3(),
-        normal: new Cesium.Cartesian3() // Normale locale nel punto di partenza
+        normal: new Cesium.Cartesian3() // Normale locale nella posizione di partenza
     };
 
     // Stato corrente, in ECI.
@@ -938,28 +940,26 @@ class Particle extends SceneNode {
         });
         this.startFrames = bySystem(() => new EnuFrame());
         this.trajectories = bySystem(() => new Trajectory());
-        this.setStartPoint(DEFAULT_START_POINT.latitudeDeg, DEFAULT_START_POINT.longitudeDeg);
+        this.setStartPosition(DEFAULT_START_POSITION);
     }
 
     // --------------------------------------------------
     // CONDIZIONI INIZIALI (con le loro regole di validità)
     // --------------------------------------------------
 
-    // Latitudine limitata a [-90°, +90°], longitudine ricondotta a [0°, 360°);
-    // il punto sulla superficie WGS84 segue latitudine e longitudine
-    // geodetiche.
-    setStartPoint(latitudeDeg, longitudeDeg) {
-        const start = this.start;
-        start.latitudeDeg = Cesium.Math.clamp(latitudeDeg, -90, 90);
-        start.longitudeDeg = normalizeDegrees(longitudeDeg);
+    // Modifica una o più componenti della posizione di partenza:
+    // "changes" può contenere latitudeDeg [°], longitudeDeg [°] e
+    // altitude [m]. Latitudine limitata a [-90°, +90°], longitudine
+    // ricondotta a [0°, 360°), quota non negativa; il punto WGS84 di
+    // quota 0 segue latitudine e longitudine.
+    setStartPosition(changes) {
+        const start = Object.assign(this.startPosition, changes);
+        start.latitudeDeg = Cesium.Math.clamp(start.latitudeDeg, -90, 90);
+        start.longitudeDeg = normalizeDegrees(start.longitudeDeg);
+        start.altitude = Math.max(0, start.altitude);
         Cesium.Cartesian3.fromDegrees(
             start.longitudeDeg, start.latitudeDeg, 0, Cesium.Ellipsoid.WGS84, start.surfacePointECEF
         );
-    }
-
-    // Quota non negativa [m].
-    setStartAltitude(meters) {
-        this.start.altitude = Math.max(0, meters);
     }
 
     // Modifica una o più componenti della terna "frame", che diventa
@@ -983,11 +983,12 @@ class Particle extends SceneNode {
         const C3 = Cesium.Cartesian3;
         const initial = this.initial;
 
-        // Baricentro alla quota di partenza, lungo la normale alla
-        // superficie del modello nel punto di partenza (a t = 0 le
-        // coordinate ECEF del punto coincidono con quelle ECI della
-        // particella).
-        earthModel.pointAboveSurface(this.start.surfacePointECEF, this.start.altitude, initial.position);
+        // Baricentro nella posizione di partenza: alla sua quota, lungo
+        // la normale alla superficie del modello sotto latitudine e
+        // longitudine (a t = 0 le coordinate ECEF coincidono con quelle
+        // ECI della particella).
+        const start = this.startPosition;
+        earthModel.pointAboveSurface(start.surfacePointECEF, start.altitude, initial.position);
         C3.clone(initial.position, this.state.position);
         this.updateDerivedState(earthModel);
         C3.clone(this.state.sphereCenter, initial.sphereCenter);
@@ -1046,7 +1047,7 @@ class Particle extends SceneNode {
     // v_ECI = v_ECEF + ω × r, con ω × r velocità di trascinamento nel
     // baricentro. La terna di riferimento (velocityMaster) determina
     // l'altra. Richiede le terne già posizionate (placeAt): i loro assi
-    // Est, Nord, Su sono quelli del punto di partenza.
+    // Est, Nord, Su sono quelli della posizione di partenza.
     #computeInitialVelocity() {
         const C3 = Cesium.Cartesian3;
         const frame = this.startFrames.eci; // Sistema del padre della terna = ECI
@@ -1943,7 +1944,7 @@ class PanelView {
             read: () => vm.longitudeDeg,
             write: (value) => vm.setLongitude(value)
         }));
-        this.#field(section, "Quota di partenza [km]", this.#numberInput({
+        this.#field(section, "Quota [km]", this.#numberInput({
             min: 0, step: 10,
             read: () => vm.altitudeKm,
             write: (value) => vm.setAltitudeKm(value)
@@ -2560,10 +2561,10 @@ class SceneView {
 
         viewModel.on("change", () => this.#render());
         // Il ViewModel inquadra solo le telecamere non spostate dall'utente.
-        viewModel.on("startPointLocated", () => this.#frameStartPoint());
+        viewModel.on("startPositionLocated", () => this.#frameStartPosition());
         viewer.scene.preRender.addEventListener((scene, time) => this.#update(time));
 
-        this.#frameStartPoint();
+        this.#frameStartPosition();
         this.#render();
     }
 
@@ -2591,9 +2592,9 @@ class SceneView {
         return this.#vm.frameAt(this.#secondsAt(time));
     }
 
-    // Inquadratura iniziale sul punto di partenza, mostrata subito.
-    #frameStartPoint() {
-        this.#vm.frameStartPoint(this.#camera.tanHalfFovWidth);
+    // Inquadratura iniziale sulla posizione di partenza, mostrata subito.
+    #frameStartPosition() {
+        this.#vm.frameStartPosition(this.#camera.tanHalfFovWidth);
         this.#showCamera(this.#secondsAt());
     }
 
@@ -2801,7 +2802,7 @@ class SceneView {
             // Punto in ECEF all'istante corrente, usato come punto
             // geografico: la simulazione riparte da t = 0 (ECI = ECEF).
             const cartographic = Cesium.Cartographic.fromCartesian(picked);
-            const accepted = this.#vm.pickStartPoint(
+            const accepted = this.#vm.pickStartPosition(
                 Cesium.Math.toDegrees(cartographic.latitude),
                 Cesium.Math.toDegrees(cartographic.longitude)
             );
@@ -2849,7 +2850,7 @@ class Observable {
 //   particella                                          -> Particle
 //   frecce della velocità e dell'accelerazione di Coriolis -> Arrow
 //   traiettorie                                         -> Trajectory
-//   terne nel punto di partenza                         -> EnuFrame
+//   terne nella posizione di partenza                   -> EnuFrame
 //   asse di rotazione                                   -> RotationAxis
 //   telecamere ECI ed ECEF                              -> Camera
 // Cesium disegna nel sistema ECEF: il ViewModel esprime ogni elemento
@@ -2859,7 +2860,8 @@ class Observable {
 //   "change"            lo stato mostrato dalle viste è cambiato
 //   "frame" (frame)     calcolato lo stato di un nuovo istante
 //   "error" (message)   messaggio per l'utente (undefined = nascondi)
-//   "startPointLocated" punto di partenza preso dalla posizione del PC
+//   "startPositionLocated" latitudine e longitudine di partenza prese
+//                         dalla posizione del PC
 // ============================================================
 
 
@@ -2923,19 +2925,19 @@ class SimulationViewModel extends Observable {
         return this.#particle.radius;
     }
 
-    // Latitudine del punto di partenza [°], in [-90°, +90°].
+    // Latitudine della posizione di partenza [°], in [-90°, +90°].
     get latitudeDeg() {
-        return this.#particle.start.latitudeDeg;
+        return this.#particle.startPosition.latitudeDeg;
     }
 
-    // Longitudine del punto di partenza [°], in [0°, 360°).
+    // Longitudine della posizione di partenza [°], in [0°, 360°).
     get longitudeDeg() {
-        return this.#particle.start.longitudeDeg;
+        return this.#particle.startPosition.longitudeDeg;
     }
 
-    // Quota di partenza [km].
+    // Quota della posizione di partenza [km].
     get altitudeKm() {
-        return this.#particle.start.altitude / 1000;
+        return this.#particle.startPosition.altitude / 1000;
     }
 
     // Posa { position, direction, up } della telecamera attiva in ECEF
@@ -3007,12 +3009,12 @@ class SimulationViewModel extends Observable {
     }
 
     // Punto scelto sul globo. Restituisce true se è stato accettato.
-    pickStartPoint(latitudeDeg, longitudeDeg) {
+    pickStartPosition(latitudeDeg, longitudeDeg) {
         if (!this.pickMode || this.running || !this.#clock.isAtStart()) {
             return false;
         }
         this.pickMode = false;
-        this.#editSetup(() => this.#particle.setStartPoint(latitudeDeg, longitudeDeg));
+        this.#editSetup(() => this.#particle.setStartPosition({ latitudeDeg, longitudeDeg }));
         return true;
     }
 
@@ -3021,17 +3023,17 @@ class SimulationViewModel extends Observable {
 
     // Latitudine di partenza [°].
     setLatitude(deg) {
-        this.#editSetup(() => this.#particle.setStartPoint(deg, this.longitudeDeg));
+        this.#editSetup(() => this.#particle.setStartPosition({ latitudeDeg: deg }));
     }
 
     // Longitudine di partenza [°].
     setLongitude(deg) {
-        this.#editSetup(() => this.#particle.setStartPoint(this.latitudeDeg, deg));
+        this.#editSetup(() => this.#particle.setStartPosition({ longitudeDeg: deg }));
     }
 
-    // Quota di partenza [km].
+    // Quota della posizione di partenza [km].
     setAltitudeKm(km) {
-        this.#editSetup(() => this.#particle.setStartAltitude(km * 1000));
+        this.#editSetup(() => this.#particle.setStartPosition({ altitude: km * 1000 }));
     }
 
     // Una componente della terna di velocità iniziale "frame";
@@ -3062,14 +3064,14 @@ class SimulationViewModel extends Observable {
         camera.movedByUser = true;
     }
 
-    // Inquadra il punto di partenza con le telecamere che l'utente non
+    // Inquadra la posizione di partenza con le telecamere che l'utente non
     // ha ancora spostato. "tanHalfFovWidth": tangente del semiangolo
     // del campo visivo lungo la larghezza della vista.
-    frameStartPoint(tanHalfFovWidth) {
-        const startFrame = this.#particle.startFrames.ecef; // Terna locale nel punto di partenza
+    frameStartPosition(tanHalfFovWidth) {
+        const startFrame = this.#particle.startFrames.ecef; // Terna locale relativa
         Object.values(this.#simulation.cameras)
             .filter((camera) => !camera.movedByUser)
-            .forEach((camera) => camera.frameStartPoint(startFrame, tanHalfFovWidth));
+            .forEach((camera) => camera.frameStartPosition(startFrame, tanHalfFovWidth));
     }
 
     // item: "frame", "track" o "velocity"; frame: "eci" o "ecef".
@@ -3079,9 +3081,10 @@ class SimulationViewModel extends Observable {
         this.emit("change");
     }
 
-    // Usa la posizione del PC come punto di partenza, se nel frattempo
+    // Usa la posizione del PC come latitudine e longitudine di partenza,
+    // se nel frattempo
     // l'utente non ha già scelto un punto o avviato la simulazione.
-    async locateStartPoint() {
+    async locateStartPosition() {
         const fallbackLatitude = this.latitudeDeg;
         const fallbackLongitude = this.longitudeDeg;
         const position = await this.#geolocation.getCurrentPosition();
@@ -3094,8 +3097,11 @@ class SimulationViewModel extends Observable {
         if (!position || !untouched) {
             return;
         }
-        this.#editSetup(() => this.#particle.setStartPoint(position.latitudeDeg, position.longitudeDeg));
-        this.emit("startPointLocated");
+        this.#editSetup(() => this.#particle.setStartPosition({
+            latitudeDeg: position.latitudeDeg,
+            longitudeDeg: position.longitudeDeg
+        }));
+        this.emit("startPositionLocated");
     }
 
     // --------------------------------------------------
@@ -3130,7 +3136,7 @@ class SimulationViewModel extends Observable {
             // Componente orizzontale dell'accelerazione di Coriolis:
             // { position, vector }.
             coriolis: coriolis,
-            // Terne nel punto di partenza: { position, axes: [E, N, U] }.
+            // Terne nella posizione di partenza: { position, axes: [E, N, U] }.
             referenceFrames: bySystem((system) => particle.startFrames[system].poseIn(earth, seconds)),
             // Matrici dalle coordinate delle traiettorie (vedi
             // trajectory()) a ECEF.
@@ -3226,7 +3232,7 @@ const viewModel = new SimulationViewModel(
 new PanelView(viewer.container, viewModel);
 const sceneView = new SceneView(viewer, viewModel);
 
-viewModel.locateStartPoint();
+viewModel.locateStartPosition();
 
 // Oggetto in sola lettura usato dai test end-to-end (Playwright) per
 // verificare lo stato della scena. Non ha effetti sulla simulazione.

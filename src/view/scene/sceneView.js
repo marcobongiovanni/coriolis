@@ -85,10 +85,10 @@ export class SceneView {
 
         viewModel.on("change", () => this.#render());
         // Il ViewModel inquadra solo le telecamere non spostate dall'utente.
-        viewModel.on("startPointLocated", () => this.#frameStartPoint());
+        viewModel.on("startPositionLocated", () => this.#frameStartPosition());
         viewer.scene.preRender.addEventListener((scene, time) => this.#update(time));
 
-        this.#frameStartPoint();
+        this.#frameStartPosition();
         this.#render();
     }
 
@@ -116,9 +116,9 @@ export class SceneView {
         return this.#vm.frameAt(this.#secondsAt(time));
     }
 
-    // Inquadratura iniziale sul punto di partenza, mostrata subito.
-    #frameStartPoint() {
-        this.#vm.frameStartPoint(this.#camera.tanHalfFovWidth);
+    // Inquadratura iniziale sulla posizione di partenza, mostrata subito.
+    #frameStartPosition() {
+        this.#vm.frameStartPosition(this.#camera.tanHalfFovWidth);
         this.#showCamera(this.#secondsAt());
     }
 
@@ -326,7 +326,7 @@ export class SceneView {
             // Punto in ECEF all'istante corrente, usato come punto
             // geografico: la simulazione riparte da t = 0 (ECI = ECEF).
             const cartographic = Cesium.Cartographic.fromCartesian(picked);
-            const accepted = this.#vm.pickStartPoint(
+            const accepted = this.#vm.pickStartPosition(
                 Cesium.Math.toDegrees(cartographic.latitude),
                 Cesium.Math.toDegrees(cartographic.longitude)
             );

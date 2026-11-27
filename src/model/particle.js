@@ -22,14 +22,14 @@
 //
 // Contiene ciò che appartiene alla singola particella:
 //   - raggio della sfera disegnata;
-//   - condizioni iniziali (punto e quota di partenza, velocità) con le
-//     loro regole di validità;
+//   - condizioni iniziali (posizione di partenza, velocità) con le loro
+//     regole di validità;
 //   - stato iniziale e stato corrente, in ECI;
 //   - grandezze derivate (quota, centro della sfera, energia);
 //   - frecce della velocità assoluta e relativa;
 //   - freccia della componente orizzontale dell'accelerazione di
 //     Coriolis;
-//   - terne locali assoluta e relativa nel punto di partenza;
+//   - terne locali assoluta e relativa nella posizione di partenza;
 //   - traiettorie assoluta e relativa del centro della sfera.
 // Frecce, terne e traiettorie sono nodi della scena che Simulation
 // appende a World (assoluti, chiave "eci") o alla Terra (relativi,
@@ -53,27 +53,29 @@ import { Trajectory } from "./trajectory.js";
 
 export const DEFAULT_PARTICLE_RADIUS = 125000; // [m] raggio della sfera disegnata
 
-// Punto di partenza predefinito, usato finché il browser non fornisce
-// la posizione geografica del PC.
-const DEFAULT_START_POINT = { latitudeDeg: 45.0, longitudeDeg: 7.1 };
+// Posizione di partenza predefinita; latitudine e longitudine sono
+// usate finché il browser non fornisce la posizione geografica del PC.
+const DEFAULT_START_POSITION = { latitudeDeg: 45.0, longitudeDeg: 7.1, altitude: 0 };
 
 export class Particle extends SceneNode {
     // Raggio della sfera con cui la particella è disegnata [m]: non
     // entra nella dinamica.
     radius;
 
-    // Condizioni iniziali. Il punto di partenza (latitudine, longitudine
-    // e punto sulla superficie) è impostato dal costruttore con
-    // setStartPoint().
-    start = {
-        latitudeDeg: 0,                            // [-90°, +90°]
-        longitudeDeg: 0,                           // [0°, 360°)
-        surfacePointECEF: new Cesium.Cartesian3(), // Punto di partenza sulla superficie WGS84
-        altitude: 0 // Quota del baricentro (punto di contatto) [m]
+    // Posizione di partenza del baricentro (condizione iniziale):
+    // latitudine e longitudine geodetiche WGS84 e quota lungo la normale
+    // locale del modello di Terra. Impostata dal costruttore con
+    // setStartPosition().
+    startPosition = {
+        latitudeDeg: 0,                           // [-90°, +90°]
+        longitudeDeg: 0,                          // [0°, 360°)
+        altitude: 0,                              // [m], non negativa
+        surfacePointECEF: new Cesium.Cartesian3() // Derivato: punto WGS84 di quota 0
     };
 
-    // Terne di velocità iniziale (nella terna Est-Nord-Su del punto di
-    // partenza: modulo [km/h], azimuth [°] dal Nord, elevazione [°]):
+    // Terne di velocità iniziale (nella terna Est-Nord-Su della
+    // posizione di partenza: modulo [km/h], azimuth [°] dal Nord,
+    // elevazione [°]):
     //   "eci":  velocità assoluta, rispetto allo spazio inerziale;
     //   "ecef": velocità relativa, rispetto alla Terra.
     // L'ultima terna modificata è quella "di riferimento"
@@ -88,7 +90,7 @@ export class Particle extends SceneNode {
         position: new Cesium.Cartesian3(),
         velocity: bySystem(() => new Cesium.Cartesian3()), // Assoluta (eci) e relativa (ecef), in ECI
         sphereCenter: new Cesium.Cartesian3(),
-        normal: new Cesium.Cartesian3() // Normale locale nel punto di partenza
+        normal: new Cesium.Cartesian3() // Normale locale nella posizione di partenza
     };
 
     // Stato corrente, in ECI.
@@ -139,28 +141,26 @@ export class Particle extends SceneNode {
         });
         this.startFrames = bySystem(() => new EnuFrame());
         this.trajectories = bySystem(() => new Trajectory());
-        this.setStartPoint(DEFAULT_START_POINT.latitudeDeg, DEFAULT_START_POINT.longitudeDeg);
+        this.setStartPosition(DEFAULT_START_POSITION);
     }
 
     // --------------------------------------------------
     // CONDIZIONI INIZIALI (con le loro regole di validità)
     // --------------------------------------------------
 
-    // Latitudine limitata a [-90°, +90°], longitudine ricondotta a [0°, 360°);
-    // il punto sulla superficie WGS84 segue latitudine e longitudine
-    // geodetiche.
-    setStartPoint(latitudeDeg, longitudeDeg) {
-        const start = this.start;
-        start.latitudeDeg = Cesium.Math.clamp(latitudeDeg, -90, 90);
-        start.longitudeDeg = normalizeDegrees(longitudeDeg);
+    // Modifica una o più componenti della posizione di partenza:
+    // "changes" può contenere latitudeDeg [°], longitudeDeg [°] e
+    // altitude [m]. Latitudine limitata a [-90°, +90°], longitudine
+    // ricondotta a [0°, 360°), quota non negativa; il punto WGS84 di
+    // quota 0 segue latitudine e longitudine.
+    setStartPosition(changes) {
+        const start = Object.assign(this.startPosition, changes);
+        start.latitudeDeg = Cesium.Math.clamp(start.latitudeDeg, -90, 90);
+        start.longitudeDeg = normalizeDegrees(start.longitudeDeg);
+        start.altitude = Math.max(0, start.altitude);
         Cesium.Cartesian3.fromDegrees(
             start.longitudeDeg, start.latitudeDeg, 0, Cesium.Ellipsoid.WGS84, start.surfacePointECEF
         );
-    }
-
-    // Quota non negativa [m].
-    setStartAltitude(meters) {
-        this.start.altitude = Math.max(0, meters);
     }
 
     // Modifica una o più componenti della terna "frame", che diventa
@@ -184,11 +184,12 @@ export class Particle extends SceneNode {
         const C3 = Cesium.Cartesian3;
         const initial = this.initial;
 
-        // Baricentro alla quota di partenza, lungo la normale alla
-        // superficie del modello nel punto di partenza (a t = 0 le
-        // coordinate ECEF del punto coincidono con quelle ECI della
-        // particella).
-        earthModel.pointAboveSurface(this.start.surfacePointECEF, this.start.altitude, initial.position);
+        // Baricentro nella posizione di partenza: alla sua quota, lungo
+        // la normale alla superficie del modello sotto latitudine e
+        // longitudine (a t = 0 le coordinate ECEF coincidono con quelle
+        // ECI della particella).
+        const start = this.startPosition;
+        earthModel.pointAboveSurface(start.surfacePointECEF, start.altitude, initial.position);
         C3.clone(initial.position, this.state.position);
         this.updateDerivedState(earthModel);
         C3.clone(this.state.sphereCenter, initial.sphereCenter);
@@ -247,7 +248,7 @@ export class Particle extends SceneNode {
     // v_ECI = v_ECEF + ω × r, con ω × r velocità di trascinamento nel
     // baricentro. La terna di riferimento (velocityMaster) determina
     // l'altra. Richiede le terne già posizionate (placeAt): i loro assi
-    // Est, Nord, Su sono quelli del punto di partenza.
+    // Est, Nord, Su sono quelli della posizione di partenza.
     #computeInitialVelocity() {
         const C3 = Cesium.Cartesian3;
         const frame = this.startFrames.eci; // Sistema del padre della terna = ECI

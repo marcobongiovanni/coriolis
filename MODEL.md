@@ -76,7 +76,7 @@ classDiagram
 
     class Particle {
         radius
-        start
+        startPosition
         velocityMaster
         velocity eci/ecef
         initial
@@ -85,8 +85,7 @@ classDiagram
         coriolisArrow
         startFrames eci/ecef
         trajectories eci/ecef
-        setStartPoint(latitudeDeg, longitudeDeg)
-        setStartAltitude(meters)
+        setStartPosition(changes)
         setVelocity(frame, changes)
         reset(earthModel)
         recordTrajectory(seconds)
@@ -120,7 +119,7 @@ classDiagram
         up
         expressedIn(node, seconds)
         setFrom(node, pose, seconds)
-        frameStartPoint(frame, tanHalfFovWidth)
+        frameStartPosition(frame, tanHalfFovWidth)
     }
 
     SceneNode <|-- Earth

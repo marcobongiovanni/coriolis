@@ -29,8 +29,11 @@ export function createSystemNodes() {
 
 // Condizioni iniziali note (quota 225 km se non indicata).
 function configureParticle(particle, options) {
-    particle.setStartPoint(options.latitude ?? 45.0, options.longitude ?? 7.1);
-    particle.setStartAltitude((options.altitudeKm ?? 225) * 1000);
+    particle.setStartPosition({
+        latitudeDeg: options.latitude ?? 45.0,
+        longitudeDeg: options.longitude ?? 7.1,
+        altitude: (options.altitudeKm ?? 225) * 1000
+    });
     if (options.ecef) {
         particle.setVelocity("ecef", options.ecef);
     }

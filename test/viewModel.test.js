@@ -57,7 +57,7 @@ function createViewModel(position) {
     simulation = new Simulation();
     vm = new SimulationViewModel(simulation, clock, new FakeGeolocation(position));
     events = [];
-    ["change", "error", "startPointLocated"].forEach((name) => {
+    ["change", "error", "startPositionLocated"].forEach((name) => {
         vm.on(name, (arg) => events.push(arg === undefined ? name : [name, arg]));
     });
 }
@@ -163,7 +163,7 @@ describe("condizioni iniziali", function () {
     });
 });
 
-describe("selezione del punto di partenza", function () {
+describe("scelta della posizione di partenza sul globo", function () {
     it("richiede il Reset se il tempo è avanzato", function () {
         runAndPause();
         events.length = 0;
@@ -172,17 +172,17 @@ describe("selezione del punto di partenza", function () {
         expect(events).toEqual([["error", PICK_REQUIRES_RESET_MESSAGE]]);
     });
 
-    it("il punto scelto diventa il punto di partenza e chiude la selezione", function () {
+    it("il punto scelto dà latitudine e longitudine di partenza e chiude la selezione", function () {
         vm.togglePickMode();
         expect(vm.pickMode).toBe(true);
-        expect(vm.pickStartPoint(10, -20)).toBe(true);
+        expect(vm.pickStartPosition(10, -20)).toBe(true);
         expect(vm.pickMode).toBe(false);
         expect(vm.latitudeDeg).toBeCloseTo(10, 12);
         expect(vm.longitudeDeg).toBeCloseTo(340, 12);
     });
 
     it("fuori dalla modalità selezione il punto è ignorato", function () {
-        expect(vm.pickStartPoint(10, 20)).toBe(false);
+        expect(vm.pickStartPosition(10, 20)).toBe(false);
         expect(vm.latitudeDeg).toBe(45);
     });
 
@@ -213,15 +213,15 @@ describe("telecamere", function () {
         return Cesium.Cartesian3.distance(a.position, b.position);
     }
 
-    it("all'inizio entrambe inquadrano il punto di partenza", function () {
-        vm.frameStartPoint(TAN_HALF_FOV);
+    it("all'inizio entrambe inquadrano la posizione di partenza", function () {
+        vm.frameStartPosition(TAN_HALF_FOV);
         const eci = vm.cameraPose(0);
         vm.setCameraMode("ecef");
         expect(poseDistance(vm.cameraPose(0), eci)).toBeLessThan(1e-6);
     });
 
     it("ognuna conserva la propria posa: spostarne una non cambia l'altra", function () {
-        vm.frameStartPoint(TAN_HALF_FOV);
+        vm.frameStartPosition(TAN_HALF_FOV);
         const initial = vm.cameraPose(0);
         const moved = { ...initial, position: Cesium.Cartesian3.multiplyByScalar(initial.position, 1.5, new Cesium.Cartesian3()) };
         vm.moveCamera("ecef", moved, 0);
@@ -232,16 +232,16 @@ describe("telecamere", function () {
     });
 
     it("l'inquadratura automatica non tocca una telecamera spostata dall'utente", function () {
-        vm.frameStartPoint(TAN_HALF_FOV);
+        vm.frameStartPosition(TAN_HALF_FOV);
         const initial = vm.cameraPose(0);
         const moved = { ...initial, position: Cesium.Cartesian3.multiplyByScalar(initial.position, 2, new Cesium.Cartesian3()) };
         vm.moveCamera("eci", moved, 0);
-        vm.frameStartPoint(TAN_HALF_FOV);
+        vm.frameStartPosition(TAN_HALF_FOV);
         expect(poseDistance(vm.cameraPose(0), moved)).toBeLessThan(1e-6);
     });
 
     it("la telecamera ECI resta ferma nello spazio, quella ECEF rispetto alla Terra", function () {
-        vm.frameStartPoint(TAN_HALF_FOV);
+        vm.frameStartPosition(TAN_HALF_FOV);
         const start = vm.cameraPose(0);
         const rotated = eciToEcef(start.position, 7.292115e-5 * 3600);
         expect(Cesium.Cartesian3.distance(vm.cameraPose(3600).position, rotated)).toBeLessThan(1e-6);
@@ -257,7 +257,7 @@ describe("stato a un istante", function () {
         expect(simulation.time).toBe(500);
     });
 
-    it("a t = 0 la particella è sul punto di partenza e le due terne coincidono", function () {
+    it("a t = 0 la particella è nella posizione di partenza e le due terne coincidono", function () {
         const frame = vm.frameAt(0);
         // Terra sferica: il baricentro della particella è sulla
         // verticale geocentrica, la sua latitudine geodetica può
@@ -298,26 +298,26 @@ describe("stato a un istante", function () {
 });
 
 describe("posizione geografica del PC", function () {
-    it("diventa il punto di partenza se l'utente non ha toccato nulla", async function () {
+    it("dà latitudine e longitudine di partenza se l'utente non ha toccato nulla", async function () {
         createViewModel({ latitudeDeg: 41.9, longitudeDeg: 12.5 });
-        await vm.locateStartPoint();
+        await vm.locateStartPosition();
         expect(vm.latitudeDeg).toBe(41.9);
         expect(vm.longitudeDeg).toBe(12.5);
-        expect(events).toContain("startPointLocated");
+        expect(events).toContain("startPositionLocated");
     });
 
     it("non sostituisce un punto già scelto dall'utente", async function () {
         createViewModel({ latitudeDeg: 41.9, longitudeDeg: 12.5 });
-        const pending = vm.locateStartPoint();
+        const pending = vm.locateStartPosition();
         vm.setLatitude(10);
         await pending;
         expect(vm.latitudeDeg).toBe(10);
-        expect(events).not.toContain("startPointLocated");
+        expect(events).not.toContain("startPositionLocated");
     });
 
     it("senza posizione resta il punto predefinito", async function () {
-        await vm.locateStartPoint();
+        await vm.locateStartPosition();
         expect(vm.latitudeDeg).toBe(45);
-        expect(events).not.toContain("startPointLocated");
+        expect(events).not.toContain("startPositionLocated");
     });
 });

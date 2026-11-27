@@ -285,7 +285,7 @@ export class PanelView {
             read: () => vm.longitudeDeg,
             write: (value) => vm.setLongitude(value)
         }));
-        this.#field(section, "Quota di partenza [km]", this.#numberInput({
+        this.#field(section, "Quota [km]", this.#numberInput({
             min: 0, step: 10,
             read: () => vm.altitudeKm,
             write: (value) => vm.setAltitudeKm(value)

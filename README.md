@@ -43,7 +43,7 @@ View (PanelView, SceneView) ──comandi──▶ ViewModel ──▶ Model (Si
 | `src/model/rotationAxis.js` | Model | `RotationAxis`: asse di rotazione terrestre e velocità angolare (unica definizione della rotazione terrestre), velocità di trascinamento e relativa. |
 | `src/model/particle.js` | Model | `Particle`: punto materiale (baricentro nel punto di contatto) disegnato come sfera; condizioni iniziali e loro regole di validità, stato iniziale e corrente, frecce della velocità, terne e traiettorie. |
 | `src/model/arrow.js` | Model | `Arrow`: grandezza vettoriale della particella, disegnata nel centro della sua sfera (oggi la velocità assoluta, quella relativa e la componente orizzontale dell'accelerazione di Coriolis). |
-| `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nel punto di partenza, ferma nel sistema del padre (World o Terra); conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
+| `src/model/enuFrame.js` | Model | `EnuFrame`: terna Est-Nord-Su nella posizione di partenza, ferma nel sistema del padre (World o Terra); conversioni della velocità tra componenti ENU e modulo/azimuth/elevazione. |
 | `src/model/trajectory.js` | Model | `Trajectory`: posizioni del centro della sfera della particella, nel sistema del padre (World o Terra). |
 | `src/model/camera.js`, `cameraFraming.js` | Model | `Camera`: telecamera ferma nel sistema del padre (World o Terra), con la sua posa e l'inquadratura iniziale. |
 | `src/model/simulation.js` | Model | `Simulation`: gerarchia della scena, tempo, integrazione e urti delle particelle. |

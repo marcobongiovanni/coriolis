@@ -20,34 +20,34 @@ describe("condizioni iniziali", function () {
     it("predefinite: punto di riserva, quota 0, velocità relativa nulla", function () {
         const particle = new Particle(new RotationAxis());
         expect(particle.radius).toBe(DEFAULT_PARTICLE_RADIUS);
-        expect(particle.start.latitudeDeg).toBe(45);
-        expect(particle.start.longitudeDeg).toBe(7.1);
-        expect(particle.start.altitude).toBe(0);
+        expect(particle.startPosition.latitudeDeg).toBe(45);
+        expect(particle.startPosition.longitudeDeg).toBe(7.1);
+        expect(particle.startPosition.altitude).toBe(0);
         expect(particle.velocityMaster).toBe("ecef");
         expect(particle.velocity.ecef.speedKmh).toBe(0);
     });
 
     it("la latitudine è limitata a ±90° e la longitudine avvolta in [0°, 360°)", function () {
         const particle = new Particle(new RotationAxis());
-        particle.setStartPoint(120, -10);
-        expect(particle.start.latitudeDeg).toBe(90);
-        expect(particle.start.longitudeDeg).toBe(350);
-        particle.setStartPoint(-95, 370);
-        expect(particle.start.latitudeDeg).toBe(-90);
-        expect(particle.start.longitudeDeg).toBeCloseTo(10, 12);
+        particle.setStartPosition({ latitudeDeg: 120, longitudeDeg: -10 });
+        expect(particle.startPosition.latitudeDeg).toBe(90);
+        expect(particle.startPosition.longitudeDeg).toBe(350);
+        particle.setStartPosition({ latitudeDeg: -95, longitudeDeg: 370 });
+        expect(particle.startPosition.latitudeDeg).toBe(-90);
+        expect(particle.startPosition.longitudeDeg).toBeCloseTo(10, 12);
     });
 
     it("il punto sulla superficie segue latitudine e longitudine", function () {
         const particle = new Particle(new RotationAxis());
-        particle.setStartPoint(30, 100);
+        particle.setStartPosition({ latitudeDeg: 30, longitudeDeg: 100 });
         const expected = Cesium.Cartesian3.fromDegrees(100, 30, 0);
-        expect(Cesium.Cartesian3.distance(particle.start.surfacePointECEF, expected)).toBeLessThan(1e-6);
+        expect(Cesium.Cartesian3.distance(particle.startPosition.surfacePointECEF, expected)).toBeLessThan(1e-6);
     });
 
     it("la quota non è negativa", function () {
         const particle = new Particle(new RotationAxis());
-        particle.setStartAltitude(-5000);
-        expect(particle.start.altitude).toBe(0);
+        particle.setStartPosition({ altitude: -5000 });
+        expect(particle.startPosition.altitude).toBe(0);
     });
 
     it("velocità: modulo non negativo, azimuth avvolto, elevazione limitata", function () {
@@ -59,7 +59,7 @@ describe("condizioni iniziali", function () {
 
     it("il raggio è solo quello della sfera disegnata: il baricentro sta sulla superficie", function () {
         const particle = new Particle(new RotationAxis(), 1000);
-        particle.setStartAltitude(0);
+        particle.setStartPosition({ altitude: 0 });
         particle.reset(SPHERICAL_EARTH);
         expect(Cesium.Cartesian3.magnitude(particle.initial.position)).toBeCloseTo(EARTH_RADIUS, 6);
         expect(Cesium.Cartesian3.magnitude(particle.initial.sphereCenter)).toBeCloseTo(EARTH_RADIUS + 1000, 6);
@@ -172,7 +172,7 @@ describe("frecce della velocità", function () {
     });
 });
 
-describe("terne nel punto di partenza", function () {
+describe("terne nella posizione di partenza", function () {
     it("hanno origine nel centro iniziale della sfera e assi Est, Nord, Su", function () {
         const { particle, earth } = createSimulation({ latitude: 30, longitude: 100 });
         const enu = enuRotation(particle.initial.normal);
@@ -209,9 +209,9 @@ describe("terne nel punto di partenza", function () {
         expect(Cesium.Cartesian3.distance(eci.position, rotated)).toBeLessThan(1e-6);
     });
 
-    it("seguono il punto di partenza al reset", function () {
+    it("seguono la posizione di partenza al reset", function () {
         const { particle, earth } = createSimulation();
-        particle.setStartPoint(-20, 200);
+        particle.setStartPosition({ latitudeDeg: -20, longitudeDeg: 200 });
         particle.reset(SPHERICAL_EARTH);
         const { position: origin } = particle.startFrames.ecef.poseIn(earth, 0);
         expect(Cesium.Cartesian3.distance(origin, particle.initial.sphereCenter)).toBeLessThan(1e-6);
